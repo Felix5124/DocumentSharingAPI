@@ -1,0 +1,1 @@
+tải appsetting.json, file fisebase: https://drive.google.com/drive/folders/1Gls8Hx-dhzWXWi_UVDkDbemhtYob0aiX?usp=sharing
