@@ -13,12 +13,22 @@ namespace DocumentSharingAPI.Repositories
         {
             var userDocs = await _context.Recommendations
                 .Where(r => r.UserId == userId)
-                .Select(r => r.Document)
+                .Select(r => r.DocumentId)
                 .ToListAsync();
 
-            var categories = userDocs.Select(d => d.CategoryId).Distinct();
+            var categories = await _context.Documents
+                .Where(d => userDocs.Contains(d.DocumentId))
+                .Select(d => d.CategoryId)
+                .Distinct()
+                .ToListAsync();
+
             var recommendedDocs = await _context.Documents
-                .Where(d => categories.Contains(d.CategoryId) && !userDocs.Contains(d))
+                .Include(d => d.User)
+                .Include(d => d.Category)
+                .Where(d => d.IsApproved && // Chỉ gợi ý tài liệu đã duyệt
+                    categories.Contains(d.CategoryId) &&
+                    !userDocs.Contains(d.DocumentId)) // Không gợi ý tài liệu đã tương tác
+                .OrderByDescending(d => d.DownloadCount)
                 .Take(10)
                 .ToListAsync();
 

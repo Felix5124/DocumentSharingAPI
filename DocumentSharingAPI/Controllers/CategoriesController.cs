@@ -34,7 +34,7 @@ namespace DocumentSharingAPI.Controllers
         }
 
         [HttpPost]
-        //[Authorize]
+        [Authorize]
         public async Task<IActionResult> Create([FromBody] CategoryModel model)
         {
             var existingCategory = await _categoryRepository.GetByNameAsync(model.Name);
@@ -51,7 +51,7 @@ namespace DocumentSharingAPI.Controllers
         }
 
         [HttpPut("{id}")]
-        //[Authorize]
+        [Authorize]
         public async Task<IActionResult> Update(int id, [FromBody] CategoryModel model)
         {
             var category = await _categoryRepository.GetByIdAsync(id);
@@ -65,7 +65,7 @@ namespace DocumentSharingAPI.Controllers
         }
 
         [HttpDelete("{id}")]
-        //[Authorize]
+        [Authorize]
         public async Task<IActionResult> Delete(int id)
         {
             var category = await _categoryRepository.GetByIdAsync(id);

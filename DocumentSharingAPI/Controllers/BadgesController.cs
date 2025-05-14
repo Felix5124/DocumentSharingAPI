@@ -25,7 +25,7 @@ namespace DocumentSharingAPI.Controllers
         }
 
         [HttpPost]
-        //[Authorize(Roles = "Admin")]
+        [Authorize(Roles = "Admin")]
         public async Task<IActionResult> Create([FromBody] BadgeModel model)
         {
             var existingBadge = await _badgeRepository.GetByNameAsync(model.Name);

@@ -45,5 +45,14 @@ namespace DocumentSharingAPI.Repositories
                 await _context.SaveChangesAsync();
             }
         }
+
+        public async Task DeleteAsync(T entity)
+        {
+            if (entity != null)
+            {
+                _dbSet.Remove(entity);
+                await _context.SaveChangesAsync();
+            }
+        }
     }
 }

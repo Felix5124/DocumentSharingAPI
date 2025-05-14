@@ -43,10 +43,15 @@ namespace DocumentSharingAPI.Repositories
         public async Task<IEnumerable<User>> GetTopUsersAsync(int limit)
         {
             return await _context.Users
+                .Include(u => u.UploadedDocuments)
                 .OrderByDescending(u => u.Points)
                 .ThenByDescending(u => u.UploadedDocuments.Count)
                 .Take(limit)
                 .ToListAsync();
+        }
+        public async Task<User> GetByIdAsync(int id) // Triển khai phương thức mới
+        {
+            return await _context.Users.FindAsync(id);
         }
     }
 }

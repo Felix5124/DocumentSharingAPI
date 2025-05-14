@@ -3,6 +3,7 @@ using DocumentSharingAPI.Repositories;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Threading.Tasks;
+using DocumentSharingAPI.Helpers;
 
 namespace DocumentSharingAPI.Controllers
 {
@@ -22,68 +23,82 @@ namespace DocumentSharingAPI.Controllers
         }
 
         [HttpGet]
-        //[Authorize]
+        [Authorize]
         public async Task<IActionResult> GetUserFollows()
         {
-            var userId = int.Parse(User.FindFirst("sub")?.Value ?? "0");
-            var follows = await _followRepository.GetByUserIdAsync(userId);
+            var userId = await this.GetCurrentUserIdAsync(_userRepository);
+            if (!userId.HasValue)
+            {
+                return Unauthorized("Không thể xác định người dùng.");
+            }
+            var follows = await _followRepository.GetByUserIdAsync(userId.Value);
             return Ok(follows);
         }
 
         [HttpPost]
-        //[Authorize]
+        [Authorize]
         public async Task<IActionResult> Follow([FromBody] FollowModel model)
         {
-            var userId = int.Parse(User.FindFirst("sub")?.Value ?? "0");
-            var user = await _userRepository.GetByIdAsync(userId);
-            if (user == null)
-                return Unauthorized();
+            if (!ModelState.IsValid) return BadRequest(ModelState);
 
-            if (model.FollowedUserId == null && model.CategoryId == null)
-                return BadRequest("Must specify user or category to follow.");
-
-            if (model.FollowedUserId != null)
+            var currentUserId = await this.GetCurrentUserIdAsync(_userRepository);
+            if (!currentUserId.HasValue)
             {
-                var followedUser = await _userRepository.GetByIdAsync(model.FollowedUserId.Value);
-                if (followedUser == null)
-                    return BadRequest("User to follow not found.");
+                return Unauthorized("Vui lòng đăng nhập để thực hiện hành động này.");
             }
 
-            if (model.CategoryId != null)
+            if (model.FollowedUserId == null && model.CategoryId == null)
+                return BadRequest("Cần chỉ định người dùng hoặc danh mục để theo dõi.");
+
+            if (model.FollowedUserId.HasValue)
+            {
+                if (model.FollowedUserId.Value == currentUserId.Value) //Không cho phép tự follow
+                    return BadRequest("Bạn không thể tự theo dõi chính mình.");
+                var followedUser = await _userRepository.GetByIdAsync(model.FollowedUserId.Value);
+                if (followedUser == null)
+                    return BadRequest("Người dùng bạn muốn theo dõi không tồn tại.");
+            }
+
+            if (model.CategoryId.HasValue)
             {
                 var category = await _categoryRepository.GetByIdAsync(model.CategoryId.Value);
                 if (category == null)
-                    return BadRequest("Category not found.");
+                    return BadRequest("Danh mục bạn muốn theo dõi không tồn tại.");
             }
 
-            var existingFollow = await _followRepository.GetFollowAsync(userId, model.FollowedUserId, model.CategoryId);
+            var existingFollow = await _followRepository.GetFollowAsync(currentUserId.Value, model.FollowedUserId, model.CategoryId);
             if (existingFollow != null)
-                return BadRequest("Already following.");
+                return Conflict("Bạn đã theo dõi mục này rồi."); // 409 Conflict
 
             var follow = new Follow
             {
-                UserId = userId,
+                UserId = currentUserId.Value,
                 FollowedUserId = model.FollowedUserId,
                 CategoryId = model.CategoryId,
                 FollowedAt = DateTime.Now
             };
             await _followRepository.AddAsync(follow);
-            return CreatedAtAction(nameof(GetUserFollows), follow);
+            // Trả về thông tin follow vừa tạo
+            return CreatedAtAction(nameof(GetUserFollows), new { }, follow);
         }
 
         [HttpDelete("{id}")]
-        //[Authorize]
-        public async Task<IActionResult> Unfollow(int id)
+        [Authorize]
+        public async Task<IActionResult> Unfollow(int followId)
         {
-            var follow = await _followRepository.GetByIdAsync(id);
+            var follow = await _followRepository.GetByIdAsync(followId);
             if (follow == null)
-                return NotFound();
+                return NotFound("Mục theo dõi không tồn tại.");
 
-            var userId = int.Parse(User.FindFirst("sub")?.Value ?? "0");
-            if (follow.UserId != userId)
-                return Forbid();
+            var currentUserId = await this.GetCurrentUserIdAsync(_userRepository);
+            if (!currentUserId.HasValue)
+                return Unauthorized();
 
-            await _followRepository.DeleteAsync(id);
+            // Chỉ người tạo follow mới được xóa
+            if (follow.UserId != currentUserId.Value)
+                return Forbid("Bạn không có quyền hủy theo dõi mục này.");
+
+            await _followRepository.DeleteAsync(followId);
             return NoContent();
         }
     }

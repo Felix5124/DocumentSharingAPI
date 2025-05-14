@@ -13,8 +13,10 @@ namespace DocumentSharingAPI.Models
         public string FileUrl { get; set; }
         public string FileType { get; set; }
         public long FileSize { get; set; }
+        public string? CoverImageUrl { get; set; }
+
         public int CategoryId { get; set; }
-        public Category Category { get; set; }
+        public virtual Category Category { get; set; }
         public int UploadedBy { get; set; }
         public User User { get; set; }
         public DateTime UploadedAt { get; set; } = DateTime.Now;
