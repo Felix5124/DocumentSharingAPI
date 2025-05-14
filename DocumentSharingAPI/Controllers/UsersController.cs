@@ -12,6 +12,7 @@ using FirebaseAdmin.Auth.Hash;
 using DocumentSharingAPI.Helpers;
 using System.Security.Claims;
 using Microsoft.EntityFrameworkCore;
+using FirebaseAdmin.Auth;
 
 namespace DocumentSharingAPI.Controllers
 {
@@ -88,49 +89,143 @@ namespace DocumentSharingAPI.Controllers
             return Ok(new { Message = "User registered successfully. Please verify your email.", UserId = user.UserId });
         }
 
-        [HttpPost("login")]
-        public async Task<IActionResult> Login([FromBody] LoginModel model)
+        //[HttpPost("login")]
+        //public async Task<IActionResult> Login([FromBody] LoginModel model)
+        //{
+        //    if (!ModelState.IsValid)
+        //    {
+        //        return BadRequest(ModelState);
+        //    }
+
+        //    var user = await _userRepository.GetByEmailAsync(model.Email);
+        //    if (user == null)
+        //        return Unauthorized("Email hoặc mật khẩu không đúng.");
+
+        //    if (user.IsLocked)
+        //        return Unauthorized("Tài khoản của bạn đã bị khóa.");
+
+        //    var claims = new Dictionary<string, object>
+        //    {
+        //        // Thêm UserId nội bộ vào claims để helper có thể lấy trực tiếp từ token
+        //        // Điều này hữu ích nếu bạn không muốn query DB mỗi lần lấy UserId từ FirebaseUid
+        //        { "internal_user_id", user.UserId.ToString() }
+        //    };
+
+        //    if (user.IsAdmin)
+        //    {
+        //        claims.Add("admin", true); // Claim để policy "Admin" hoạt động
+        //                                   // Hoặc claims.Add("IsAdmin", "true"); tùy theo định nghĩa policy
+        //    }
+
+        //    string firebaseCustomToken;
+        //    try
+        //    {
+        //        firebaseCustomToken = await FirebaseAuth.DefaultInstance
+        //            .CreateCustomTokenAsync(user.FirebaseUid, claims);
+        //    }
+        //    catch (FirebaseAuthException ex)
+        //    {
+        //        return StatusCode(StatusCodes.Status500InternalServerError, $"Lỗi tạo Firebase custom token: {ex.Message}");
+        //    }
+
+        //    return Ok(new
+        //    {
+        //        token = firebaseCustomToken, // Client sẽ dùng token này để signInWithCustomToken và lấy ID Token
+        //        user = new { UserId = user.UserId, user.Email, user.FullName, IsAdmin = user.IsAdmin }
+        //    });
+        //}
+
+
+        
+        [HttpPost("login")] //Xử lý Firebase ID Token từ client 
+        public async Task<IActionResult> Login([FromBody] FirebaseSignInModel model)
         {
-            if (!ModelState.IsValid)
+            if (!ModelState.IsValid) 
             {
                 return BadRequest(ModelState);
             }
 
-            var user = await _userRepository.GetByEmailAsync(model.Email);
-            if (user == null)
-                return Unauthorized("Email hoặc mật khẩu không đúng.");
-
-            if (user.IsLocked)
-                return Unauthorized("Tài khoản của bạn đã bị khóa.");
-
-            var claims = new Dictionary<string, object>
-            {
-                // Thêm UserId nội bộ vào claims để helper có thể lấy trực tiếp từ token
-                // Điều này hữu ích nếu bạn không muốn query DB mỗi lần lấy UserId từ FirebaseUid
-                { "internal_user_id", user.UserId.ToString() }
-            };
-
-            if (user.IsAdmin)
-            {
-                claims.Add("admin", true); // Claim để policy "Admin" hoạt động
-                                           // Hoặc claims.Add("IsAdmin", "true"); tùy theo định nghĩa policy
-            }
-
-            string firebaseCustomToken;
+            FirebaseToken decodedToken;
             try
             {
-                firebaseCustomToken = await FirebaseAuth.DefaultInstance
-                    .CreateCustomTokenAsync(user.FirebaseUid, claims);
+                // Xác minh Firebase ID Token nhận từ client
+                decodedToken = await FirebaseAuth.DefaultInstance.VerifyIdTokenAsync(model.IdToken);
             }
             catch (FirebaseAuthException ex)
             {
-                return StatusCode(StatusCodes.Status500InternalServerError, $"Lỗi tạo Firebase custom token: {ex.Message}");
+                // Token không hợp lệ, hết hạn,...
+                Console.WriteLine($"Firebase ID Token verification failed: {ex.Message}, Firebase Error: {ex.Message}");
+                return Unauthorized(new { Message = "Firebase ID Token không hợp lệ hoặc đã hết hạn.", Details = ex.Message });
+            }
+            catch (Exception ex) // Các lỗi khác không lường trước
+            {
+                Console.WriteLine($"An unexpected error occurred during ID Token verification: {ex.Message}");
+                return StatusCode(StatusCodes.Status500InternalServerError, new { Message = "Lỗi không xác định trong quá trình xác minh token." });
+            }
+
+
+            string firebaseUid = decodedToken.Uid;
+
+            // BƯỚC 2: Lấy thông tin user từ DB cục bộ bằng Firebase UID đã xác thực
+            var user = await _userRepository.GetByFirebaseUidAsync(firebaseUid);
+
+            if (user == null)
+            {
+                // User đã xác thực với Firebase nhưng không tồn tại trong DB cục bộ của bạn.
+                // Điều này có thể xảy ra nếu user đăng ký qua Firebase trực tiếp (nếu bạn cho phép)
+                // mà chưa hoàn tất hồ sơ trên hệ thống của bạn, hoặc do thiếu đồng bộ dữ liệu.
+                // Tùy vào logic nghiệp vụ, bạn có thể:
+                // 1. Trả lỗi Unauthorized.
+                // 2. Tự động tạo một bản ghi user mới trong DB cục bộ (nếu có đủ thông tin từ decodedToken).
+                Console.WriteLine($"User authenticated with Firebase (UID: {firebaseUid}) but not found in local DB. Email from token: {decodedToken.Claims.GetValueOrDefault("email")}");
+                return Unauthorized(new { Message = "Người dùng Firebase hợp lệ nhưng không tìm thấy trong hệ thống cục bộ. Vui lòng hoàn tất đăng ký hoặc liên hệ hỗ trợ." });
+            }
+
+            if (user.IsLocked)
+            {
+                return Unauthorized(new { Message = "Tài khoản của bạn đã bị khóa." });
+            }
+
+            // BƯỚC 3: Tạo Firebase Custom Token mới với các claims từ backend
+            var claims = new Dictionary<string, object>
+            {
+                { "internal_user_id", user.UserId.ToString() }
+                // Bạn có thể thêm các claims khác từ decodedToken nếu muốn chúng được "refresh" vào custom token mới
+                // Ví dụ: { "email_verified", decodedToken.Claims.GetValueOrDefault("email_verified", false) }
+            };
+            if (user.IsAdmin)
+            {
+                claims.Add("admin", true);
+            }
+
+            // (Tùy chọn) Nếu muốn các claims này (ví dụ: admin, internal_user_id) được cập nhật
+            // vĩnh viễn vào Firebase User record để các ID token sau này tự có, bạn có thể gọi:
+            // try
+            // {
+            //     await FirebaseAuth.DefaultInstance.SetCustomUserClaimsAsync(firebaseUid, claims);
+            // }
+            // catch(FirebaseAuthException ex)
+            // {
+            //    Console.WriteLine($"Error setting custom claims on Firebase user {firebaseUid}: {ex.Message}");
+            //    // Không nên chặn luồng đăng nhập vì lỗi này, nhưng cần log lại
+            // }
+
+
+            string backendCustomToken;
+            try
+            {
+                backendCustomToken = await FirebaseAuth.DefaultInstance.CreateCustomTokenAsync(firebaseUid, claims);
+            }
+            catch (FirebaseAuthException ex)
+            {
+                Console.WriteLine($"Error creating backend custom token for UID {firebaseUid}: {ex.Message}");
+                return StatusCode(StatusCodes.Status500InternalServerError, new { Message = "Lỗi tạo custom token từ backend.", Details = ex.Message });
             }
 
             return Ok(new
             {
-                token = firebaseCustomToken, // Client sẽ dùng token này để signInWithCustomToken và lấy ID Token
-                user = new { UserId = user.UserId, user.Email, user.FullName, IsAdmin = user.IsAdmin }
+                token = backendCustomToken, // Client sẽ dùng token này để signInWithCustomToken
+                user = new { user.UserId, user.Email, user.FullName, IsAdmin = user.IsAdmin, user.AvatarUrl, user.School, user.Points, user.Level } // Trả về thông tin user đầy đủ hơn
             });
         }
 
