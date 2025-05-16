@@ -129,6 +129,11 @@ namespace DocumentSharingAPI.Services
                 }
                 return await ProcessPdfToImage(tempPdfPath, outputSubfolder, documentTitle);
             }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error extracting image from PDF '{tempPdfPath}': {ex.Message}");
+                return null; // Hiện tại chỉ in lỗi, có thể cân nhắc trả về ảnh mặc định
+            }
             finally
             {
                 if (File.Exists(tempPdfPath))
@@ -145,6 +150,7 @@ namespace DocumentSharingAPI.Services
         // Phương thức này nhận pdfPhysicalPath là đường dẫn vật lý đầy đủ của file PDF đã được lưu trên server
         public Task<string> ExtractFirstPageAsImageAsync(string pdfRelativePath, string outputSubfolder, string documentTitle)
         {
+
             if (string.IsNullOrEmpty(pdfRelativePath))
             {
                 return Task.FromResult<string>(null);
