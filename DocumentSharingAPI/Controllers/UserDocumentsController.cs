@@ -8,7 +8,7 @@ namespace DocumentSharingAPI.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
-    [Authorize]
+    //[Authorize]
     public class UserDocumentsController : ControllerBase
     {
         private readonly IUserDocumentRepository _userDocumentRepository;
