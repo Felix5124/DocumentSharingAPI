@@ -12,8 +12,8 @@ namespace DocumentSharingAPI.Repositories
         public async Task<IEnumerable<Comment>> GetByDocumentIdAsync(int documentId)
         {
             return await _context.Comments
+                .Include(c => c.User) // Chỉ eager load User nếu cần
                 .Where(c => c.DocumentId == documentId)
-                .Include(c => c.User)
                 .ToListAsync();
         }
     }

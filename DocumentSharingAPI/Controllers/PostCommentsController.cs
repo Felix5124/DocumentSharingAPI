@@ -3,6 +3,8 @@ using DocumentSharingAPI.Repositories;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Threading.Tasks;
+using System.Linq;
+using Microsoft.EntityFrameworkCore;
 
 namespace DocumentSharingAPI.Controllers
 {
@@ -29,21 +31,53 @@ namespace DocumentSharingAPI.Controllers
                 return NotFound("Post not found.");
 
             var comments = await _postCommentRepository.GetByPostIdAsync(postId);
-            return Ok(comments);
+            var commentDtos = comments.Select(c => new
+            {
+                c.PostCommentId,
+                c.PostId,
+                c.Content,
+                c.CreatedAt,
+                c.UserId,
+                UserEmail = c.User?.Email ?? "Ẩn danh"
+            }).ToList();
+            return Ok(commentDtos);
         }
 
         [HttpPost]
-        //[Authorize]
         public async Task<IActionResult> Create([FromBody] PostCommentModel model)
         {
             var post = await _postRepository.GetByIdAsync(model.PostId);
             if (post == null)
                 return BadRequest("Post not found.");
 
-            var userId = int.Parse(User.FindFirst("sub")?.Value ?? "0");
-            var user = await _context.Users.FindAsync(userId);
-            if (user == null)
-                return Unauthorized();
+            // Lấy FirebaseUid từ token (nếu có)
+            var firebaseUid = User.FindFirst("sub")?.Value;
+            if (string.IsNullOrEmpty(firebaseUid))
+            {
+                // Nếu không có token, yêu cầu UserId từ body
+                if (model.UserId == null || model.UserId <= 0)
+                    return BadRequest("UserId is required.");
+            }
+
+            int userId;
+            if (!string.IsNullOrEmpty(firebaseUid))
+            {
+                // Tìm user dựa trên FirebaseUid
+                var user = await _context.Users.FirstOrDefaultAsync(u => u.FirebaseUid == firebaseUid);
+                if (user == null)
+                    return BadRequest("User not found.");
+
+                userId = user.UserId;
+            }
+            else
+            {
+                // Nếu không có token, sử dụng UserId từ body
+                userId = model.UserId.Value;
+            }
+
+            var userCheck = await _context.Users.FindAsync(userId);
+            if (userCheck == null)
+                return BadRequest("User not found.");
 
             var comment = new PostComment
             {
@@ -53,20 +87,32 @@ namespace DocumentSharingAPI.Controllers
                 CreatedAt = DateTime.Now
             };
             await _postCommentRepository.AddAsync(comment);
-            return CreatedAtAction(nameof(GetByPost), new { postId = comment.PostId }, comment);
+            return CreatedAtAction(nameof(GetByPost), new { postId = comment.PostId }, new
+            {
+                comment.PostCommentId,
+                comment.PostId,
+                comment.Content,
+                comment.CreatedAt,
+                comment.UserId,
+                UserEmail = userCheck.Email
+            });
         }
 
         [HttpDelete("{id}")]
-        //[Authorize]
         public async Task<IActionResult> Delete(int id)
         {
             var comment = await _postCommentRepository.GetByIdAsync(id);
             if (comment == null)
                 return NotFound();
 
-            var userId = int.Parse(User.FindFirst("sub")?.Value ?? "0");
-            if (comment.UserId != userId && !User.IsInRole("Admin"))
-                return Forbid();
+            // Lấy FirebaseUid từ token (nếu có)
+            var firebaseUid = User.FindFirst("sub")?.Value;
+            if (string.IsNullOrEmpty(firebaseUid))
+                return BadRequest("User authentication required to delete comment.");
+
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.FirebaseUid == firebaseUid);
+            if (user == null || (comment.UserId != user.UserId && !User.IsInRole("Admin")))
+                return Forbid("You are not authorized to delete this comment.");
 
             await _postCommentRepository.DeleteAsync(id);
             return NoContent();
@@ -77,5 +123,6 @@ namespace DocumentSharingAPI.Controllers
     {
         public int PostId { get; set; }
         public string Content { get; set; }
+        public int? UserId { get; set; } // Thêm UserId để frontend gửi
     }
 }
