@@ -12,8 +12,8 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace DocumentSharingAPI.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20250418164250_Init")]
-    partial class Init
+    [Migration("20250517081246_Initial")]
+    partial class Initial
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -168,7 +168,7 @@ namespace DocumentSharingAPI.Migrations
                     b.Property<DateTime>("FollowedAt")
                         .HasColumnType("datetime2");
 
-                    b.Property<int?>("FollowedUserId")
+                    b.Property<int>("FollowedUserId")
                         .HasColumnType("int");
 
                     b.Property<int>("UserId")
@@ -324,6 +324,10 @@ namespace DocumentSharingAPI.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
+                    b.Property<string>("FirebaseUid")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<string>("FullName")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
@@ -375,10 +379,13 @@ namespace DocumentSharingAPI.Migrations
                     b.Property<int>("DocumentId")
                         .HasColumnType("int");
 
+                    b.Property<string>("ActionType")
+                        .HasColumnType("nvarchar(450)");
+
                     b.Property<DateTime>("AddedAt")
                         .HasColumnType("datetime2");
 
-                    b.HasKey("UserId", "DocumentId");
+                    b.HasKey("UserId", "DocumentId", "ActionType");
 
                     b.HasIndex("DocumentId");
 
@@ -432,7 +439,8 @@ namespace DocumentSharingAPI.Migrations
                     b.HasOne("DocumentSharingAPI.Models.User", "FollowedUser")
                         .WithMany("Followers")
                         .HasForeignKey("FollowedUserId")
-                        .OnDelete(DeleteBehavior.Restrict);
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
 
                     b.HasOne("DocumentSharingAPI.Models.User", "User")
                         .WithMany("Follows")

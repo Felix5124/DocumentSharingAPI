@@ -1,6 +1,5 @@
 ﻿using DocumentSharingAPI.Models;
 using DocumentSharingAPI.Repositories;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Threading.Tasks;
 
@@ -18,12 +17,20 @@ namespace DocumentSharingAPI.Controllers
         }
 
         [HttpGet]
-        //[Authorize]
-        public async Task<IActionResult> GetUserBadges()
+        public async Task<IActionResult> GetUserBadges([FromQuery] int userId)
         {
-            var userId = int.Parse(User.FindFirst("sub")?.Value ?? "0");
-            var badges = await _userBadgeRepository.GetByUserIdAsync(userId);
-            return Ok(badges);
+            if (userId <= 0)
+                return BadRequest("Invalid user ID.");
+
+            try
+            {
+                var badges = await _userBadgeRepository.GetByUserIdAsync(userId);
+                return Ok(badges);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Internal server error: {ex.Message}");
+            }
         }
     }
 }

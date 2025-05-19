@@ -1,6 +1,5 @@
 ﻿using DocumentSharingAPI.Models;
 using DocumentSharingAPI.Repositories;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Threading.Tasks;
 
@@ -12,85 +11,120 @@ namespace DocumentSharingAPI.Controllers
     {
         private readonly IFollowRepository _followRepository;
         private readonly IUserRepository _userRepository;
-        private readonly ICategoryRepository _categoryRepository;
 
-        public FollowsController(IFollowRepository followRepository, IUserRepository userRepository, ICategoryRepository categoryRepository)
+        public FollowsController(IFollowRepository followRepository, IUserRepository userRepository)
         {
             _followRepository = followRepository;
             _userRepository = userRepository;
-            _categoryRepository = categoryRepository;
         }
 
-        [HttpGet]
-        //[Authorize]
-        public async Task<IActionResult> GetUserFollows()
+        [HttpGet("followers")]
+        public async Task<IActionResult> GetUserFollowers([FromQuery] int followedUserId)
         {
-            var userId = int.Parse(User.FindFirst("sub")?.Value ?? "0");
-            var follows = await _followRepository.GetByUserIdAsync(userId);
-            return Ok(follows);
+            if (followedUserId <= 0)
+                return BadRequest("Invalid user ID.");
+
+            try
+            {
+                var user = await _userRepository.GetByIdAsync(followedUserId);
+                if (user == null)
+                    return NotFound("User not found.");
+
+                var followers = await _followRepository.GetFollowersByUserIdAsync(followedUserId);
+                return Ok(followers);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Internal server error: {ex.Message}");
+            }
         }
 
         [HttpPost]
-        //[Authorize]
         public async Task<IActionResult> Follow([FromBody] FollowModel model)
         {
-            var userId = int.Parse(User.FindFirst("sub")?.Value ?? "0");
-            var user = await _userRepository.GetByIdAsync(userId);
-            if (user == null)
-                return Unauthorized();
+            if (model.UserId == null || model.UserId <= 0)
+                return BadRequest("Invalid user ID.");
 
-            if (model.FollowedUserId == null && model.CategoryId == null)
-                return BadRequest("Must specify user or category to follow.");
+            if (model.FollowedUserId == null || model.FollowedUserId <= 0)
+                return BadRequest("Must specify a user to follow.");
 
-            if (model.FollowedUserId != null)
+            if (model.UserId == model.FollowedUserId)
+                return BadRequest("Cannot follow yourself.");
+
+            try
             {
+                var user = await _userRepository.GetByIdAsync(model.UserId.Value);
+                if (user == null)
+                    return NotFound("User not found.");
+
                 var followedUser = await _userRepository.GetByIdAsync(model.FollowedUserId.Value);
                 if (followedUser == null)
                     return BadRequest("User to follow not found.");
+
+                var existingFollow = await _followRepository.GetFollowAsync(model.UserId.Value, model.FollowedUserId.Value);
+                if (existingFollow != null)
+                    return BadRequest("Already following.");
+
+                var follow = new Follow
+                {
+                    UserId = model.UserId.Value,
+                    FollowedUserId = model.FollowedUserId.Value
+                };
+                await _followRepository.AddAsync(follow);
+                return CreatedAtAction(nameof(GetUserFollowers), new { followedUserId = follow.FollowedUserId }, follow);
             }
-
-            if (model.CategoryId != null)
+            catch (Exception ex)
             {
-                var category = await _categoryRepository.GetByIdAsync(model.CategoryId.Value);
-                if (category == null)
-                    return BadRequest("Category not found.");
+                return StatusCode(500, $"Internal server error: {ex.Message}");
             }
+        }
 
-            var existingFollow = await _followRepository.GetFollowAsync(userId, model.FollowedUserId, model.CategoryId);
-            if (existingFollow != null)
-                return BadRequest("Already following.");
+        [HttpGet]
+        public async Task<IActionResult> GetUserFollowing([FromQuery] int userId)
+        {
+            if (userId <= 0)
+                return BadRequest("Invalid user ID.");
 
-            var follow = new Follow
+            try
             {
-                UserId = userId,
-                FollowedUserId = model.FollowedUserId,
-                CategoryId = model.CategoryId,
-                FollowedAt = DateTime.Now
-            };
-            await _followRepository.AddAsync(follow);
-            return CreatedAtAction(nameof(GetUserFollows), follow);
+                var user = await _userRepository.GetByIdAsync(userId);
+                if (user == null)
+                    return NotFound("User not found.");
+
+                var follows = await _followRepository.GetByUserIdAsync(userId);
+                return Ok(follows);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Internal server error: {ex.Message}");
+            }
         }
 
         [HttpDelete("{id}")]
-        //[Authorize]
         public async Task<IActionResult> Unfollow(int id)
         {
-            var follow = await _followRepository.GetByIdAsync(id);
-            if (follow == null)
-                return NotFound();
+            if (id <= 0)
+                return BadRequest("Invalid follow ID.");
 
-            var userId = int.Parse(User.FindFirst("sub")?.Value ?? "0");
-            if (follow.UserId != userId)
-                return Forbid();
+            try
+            {
+                var follow = await _followRepository.GetByIdAsync(id);
+                if (follow == null)
+                    return NotFound($"Follow with ID {id} not found.");
 
-            await _followRepository.DeleteAsync(id);
-            return NoContent();
+                await _followRepository.DeleteAsync(id);
+                return NoContent();
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Internal server error: {ex.Message}");
+            }
         }
     }
 
     public class FollowModel
     {
+        public int? UserId { get; set; }
         public int? FollowedUserId { get; set; }
-        public int? CategoryId { get; set; }
     }
 }

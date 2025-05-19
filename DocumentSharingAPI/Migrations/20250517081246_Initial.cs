@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace DocumentSharingAPI.Migrations
 {
     /// <inheritdoc />
-    public partial class Init : Migration
+    public partial class Initial : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
@@ -45,6 +45,7 @@ namespace DocumentSharingAPI.Migrations
                 {
                     UserId = table.Column<int>(type: "int", nullable: false)
                         .Annotation("SqlServer:Identity", "1, 1"),
+                    FirebaseUid = table.Column<string>(type: "nvarchar(max)", nullable: false),
                     Email = table.Column<string>(type: "nvarchar(max)", nullable: false),
                     FullName = table.Column<string>(type: "nvarchar(max)", nullable: false),
                     AvatarUrl = table.Column<string>(type: "nvarchar(max)", nullable: true),
@@ -102,7 +103,7 @@ namespace DocumentSharingAPI.Migrations
                     FollowId = table.Column<int>(type: "int", nullable: false)
                         .Annotation("SqlServer:Identity", "1, 1"),
                     UserId = table.Column<int>(type: "int", nullable: false),
-                    FollowedUserId = table.Column<int>(type: "int", nullable: true),
+                    FollowedUserId = table.Column<int>(type: "int", nullable: false),
                     CategoryId = table.Column<int>(type: "int", nullable: true),
                     FollowedAt = table.Column<DateTime>(type: "datetime2", nullable: false)
                 },
@@ -266,11 +267,12 @@ namespace DocumentSharingAPI.Migrations
                 {
                     UserId = table.Column<int>(type: "int", nullable: false),
                     DocumentId = table.Column<int>(type: "int", nullable: false),
+                    ActionType = table.Column<string>(type: "nvarchar(450)", nullable: false),
                     AddedAt = table.Column<DateTime>(type: "datetime2", nullable: false)
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_UserDocuments", x => new { x.UserId, x.DocumentId });
+                    table.PrimaryKey("PK_UserDocuments", x => new { x.UserId, x.DocumentId, x.ActionType });
                     table.ForeignKey(
                         name: "FK_UserDocuments_Documents_DocumentId",
                         column: x => x.DocumentId,
