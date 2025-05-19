@@ -165,7 +165,7 @@ namespace DocumentSharingAPI.Migrations
                     b.Property<DateTime>("FollowedAt")
                         .HasColumnType("datetime2");
 
-                    b.Property<int?>("FollowedUserId")
+                    b.Property<int>("FollowedUserId")
                         .HasColumnType("int");
 
                     b.Property<int>("UserId")
@@ -436,7 +436,8 @@ namespace DocumentSharingAPI.Migrations
                     b.HasOne("DocumentSharingAPI.Models.User", "FollowedUser")
                         .WithMany("Followers")
                         .HasForeignKey("FollowedUserId")
-                        .OnDelete(DeleteBehavior.Restrict);
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
 
                     b.HasOne("DocumentSharingAPI.Models.User", "User")
                         .WithMany("Follows")

@@ -1,5 +1,4 @@
 ﻿using DocumentSharingAPI.Repositories;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Threading.Tasks;
 
@@ -17,12 +16,20 @@ namespace DocumentSharingAPI.Controllers
         }
 
         [HttpGet]
-        //[Authorize]
-        public async Task<IActionResult> GetRecommendations()
+        public async Task<IActionResult> GetRecommendations([FromQuery] int userId)
         {
-            var userId = int.Parse(User.FindFirst("sub")?.Value ?? "0");
-            var documents = await _recommendationRepository.GetRecommendedDocumentsAsync(userId);
-            return Ok(documents);
+            if (userId <= 0)
+                return BadRequest("Invalid user ID.");
+
+            try
+            {
+                var documents = await _recommendationRepository.GetRecommendedDocumentsAsync(userId);
+                return Ok(documents);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Internal server error: {ex.Message}");
+            }
         }
     }
 }

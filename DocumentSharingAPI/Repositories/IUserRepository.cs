@@ -8,5 +8,7 @@ namespace DocumentSharingAPI.Repositories
         Task<User> GetByEmailAsync(string email);
         Task UpdatePointsAsync(int userId, int points);
         Task<IEnumerable<User>> GetTopUsersAsync(int limit);
+        Task UpdateLockStatusAsync(int userId, bool isLocked); // Đã có
+        new Task<User> GetByIdAsync(int id);
     }
 }
