@@ -1,6 +1,7 @@
 ﻿using DocumentSharingAPI.Models;
 using DocumentSharingAPI.Repositories;
 using Microsoft.AspNetCore.Mvc;
+using System;
 using System.Threading.Tasks;
 
 namespace DocumentSharingAPI.Controllers
@@ -11,11 +12,16 @@ namespace DocumentSharingAPI.Controllers
     {
         private readonly IFollowRepository _followRepository;
         private readonly IUserRepository _userRepository;
+        private readonly INotificationRepository _notificationRepository; // Thêm repository cho thông báo
 
-        public FollowsController(IFollowRepository followRepository, IUserRepository userRepository)
+        public FollowsController(
+            IFollowRepository followRepository,
+            IUserRepository userRepository,
+            INotificationRepository notificationRepository) // Inject INotificationRepository
         {
             _followRepository = followRepository;
             _userRepository = userRepository;
+            _notificationRepository = notificationRepository;
         }
 
         [HttpGet("followers")]
@@ -71,6 +77,17 @@ namespace DocumentSharingAPI.Controllers
                     FollowedUserId = model.FollowedUserId.Value
                 };
                 await _followRepository.AddAsync(follow);
+
+                // Tạo thông báo cho người dùng B
+                var notification = new Notification
+                {
+                    UserId = model.FollowedUserId.Value, // Người nhận thông báo (B)
+                    Message = $"{user.Email} đã bắt đầu theo dõi bạn!", // Nội dung thông báo
+                    SentAt = DateTime.Now,
+                    IsRead = false
+                };
+                await _notificationRepository.AddAsync(notification);
+
                 return CreatedAtAction(nameof(GetUserFollowers), new { followedUserId = follow.FollowedUserId }, follow);
             }
             catch (Exception ex)

@@ -1,5 +1,9 @@
 ﻿using DocumentSharingAPI.Models;
 using Microsoft.EntityFrameworkCore;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
 
 namespace DocumentSharingAPI.Repositories
 {
@@ -7,6 +11,55 @@ namespace DocumentSharingAPI.Repositories
     {
         public DocumentRepository(AppDbContext context) : base(context)
         {
+        }
+
+        public new async Task DeleteAsync(int id) // Thêm từ khóa new
+        {
+            try
+            {
+                var document = await _context.Documents.FindAsync(id);
+                if (document == null)
+                {
+                    Console.WriteLine($"Document with ID {id} not found in DeleteAsync.");
+                    return;
+                }
+
+                var notifications = await _context.Notifications
+                    .Where(n => n.DocumentId == id)
+                    .ToListAsync();
+                if (notifications.Any())
+                {
+                    _context.Notifications.RemoveRange(notifications);
+                    Console.WriteLine($"Deleted {notifications.Count} notifications for DocumentId {id}");
+                }
+
+                var userDocuments = await _context.UserDocuments
+                    .Where(ud => ud.DocumentId == id)
+                    .ToListAsync();
+                if (userDocuments.Any())
+                {
+                    _context.UserDocuments.RemoveRange(userDocuments);
+                    Console.WriteLine($"Deleted {userDocuments.Count} user documents for DocumentId {id}");
+                }
+
+                var comments = await _context.Comments
+                    .Where(c => c.DocumentId == id)
+                    .ToListAsync();
+                if (comments.Any())
+                {
+                    _context.Comments.RemoveRange(comments);
+                    Console.WriteLine($"Deleted {comments.Count} comments for DocumentId {id}");
+                }
+
+                _context.Documents.Remove(document);
+                await _context.SaveChangesAsync();
+                Console.WriteLine($"Document with ID {id} deleted from database.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error in DeleteAsync for DocumentId {id}: {ex.Message}");
+                throw;
+            }
         }
 
         public async Task<Document> GetByTitleAsync(string title)
@@ -83,22 +136,17 @@ namespace DocumentSharingAPI.Repositories
         {
             var query = _context.Documents.AsQueryable();
 
-            // Lọc theo isApproved = true ngay từ đầu
             query = query.Where(d => d.IsApproved == true);
 
-            // Lọc theo keyword
             if (!string.IsNullOrEmpty(keyword))
                 query = query.Where(d => d.Title.Contains(keyword) || d.Description.Contains(keyword));
 
-            // Lọc theo categoryId
             if (categoryId.HasValue && categoryId.Value > 0)
                 query = query.Where(d => d.CategoryId == categoryId.Value);
 
-            // Lọc theo fileType
             if (!string.IsNullOrEmpty(fileType))
                 query = query.Where(d => d.FileType == fileType);
 
-            // Sắp xếp
             switch (sortBy?.ToLower())
             {
                 case "newest":
@@ -112,10 +160,8 @@ namespace DocumentSharingAPI.Repositories
                     break;
             }
 
-            // Tính tổng số tài liệu đã được phê duyệt
             var total = await query.CountAsync();
 
-            // Phân trang
             var documents = await query
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
@@ -128,25 +174,50 @@ namespace DocumentSharingAPI.Repositories
         {
             var query = _context.Documents.AsQueryable();
 
-            // Lọc theo keyword
             if (!string.IsNullOrEmpty(keyword))
                 query = query.Where(d => d.Title.Contains(keyword) || d.Description.Contains(keyword));
 
-            // Lọc theo categoryId
             if (categoryId.HasValue && categoryId.Value > 0)
                 query = query.Where(d => d.CategoryId == categoryId.Value);
 
-            // Lọc theo fileType
             if (!string.IsNullOrEmpty(fileType))
                 query = query.Where(d => d.FileType == fileType);
 
-            // Lọc theo isApproved
             if (isApproved)
             {
                 query = query.Where(d => d.IsApproved == true);
             }
 
             return await query.CountAsync();
+        }
+
+        public async Task UpdateLockStatusAsync(int documentId, bool isLocked)
+        {
+            var document = await _context.Documents.FindAsync(documentId);
+            if (document == null)
+            {
+                Console.WriteLine($"Document with ID {documentId} not found.");
+                throw new Exception("Document not found");
+            }
+
+            Console.WriteLine($"Updating lock status for document ID {documentId}: IsLocked = {isLocked}");
+            document.IsLock = isLocked;
+            await _context.SaveChangesAsync();
+            Console.WriteLine($"Lock status updated for document ID {documentId}: IsLocked = {document.IsLock}");
+        }
+
+        public async Task<Document> GetTopDownloadedDocumentAsync()
+        {
+            return await _context.Documents
+                .Where(d => d.IsApproved == true)
+                .OrderByDescending(d => d.DownloadCount)
+                .Select(d => new Document
+                {
+                    DocumentId = d.DocumentId,
+                    Title = d.Title,
+                    DownloadCount = d.DownloadCount
+                })
+                .FirstOrDefaultAsync();
         }
     }
 }

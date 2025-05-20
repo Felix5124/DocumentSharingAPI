@@ -10,5 +10,7 @@ namespace DocumentSharingAPI.Repositories
         Task<IEnumerable<User>> GetTopUsersAsync(int limit);
         Task UpdateLockStatusAsync(int userId, bool isLocked); // Đã có
         new Task<User> GetByIdAsync(int id);
+        Task<User> GetTopCommenterAsync(); // Thêm phương thức
+        Task<User> GetTopPointsUserAsync();
     }
 }
