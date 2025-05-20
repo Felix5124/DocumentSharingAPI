@@ -129,6 +129,9 @@ namespace DocumentSharingAPI.Migrations
                     b.Property<bool>("IsApproved")
                         .HasColumnType("bit");
 
+                    b.Property<bool>("IsLock")
+                        .HasColumnType("bit");
+
                     b.Property<int>("PointsRequired")
                         .HasColumnType("int");
 
@@ -313,6 +316,9 @@ namespace DocumentSharingAPI.Migrations
 
                     b.Property<string>("AvatarUrl")
                         .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("CommentCount")
+                        .HasColumnType("int");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("datetime2");

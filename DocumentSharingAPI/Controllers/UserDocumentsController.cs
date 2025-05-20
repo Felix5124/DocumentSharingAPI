@@ -19,9 +19,11 @@ namespace DocumentSharingAPI.Controllers
         }
 
         [HttpGet("uploads")]
-        public async Task<IActionResult> GetUploads()
+        public async Task<IActionResult> GetUploads([FromQuery] int userId)
         {
-            var userId = int.Parse(User.FindFirst("sub")?.Value ?? "0");
+            if (userId <= 0)
+                return BadRequest("Invalid user ID.");
+
             var uploads = await _userDocumentRepository.GetByUserIdAndActionAsync(userId, "Upload");
             return Ok(uploads.Select(ud => new
             {
@@ -33,9 +35,11 @@ namespace DocumentSharingAPI.Controllers
         }
 
         [HttpGet("downloads")]
-        public async Task<IActionResult> GetDownloads()
+        public async Task<IActionResult> GetDownloads([FromQuery] int userId)
         {
-            var userId = int.Parse(User.FindFirst("sub")?.Value ?? "0");
+            if (userId <= 0)
+                return BadRequest("Invalid user ID.");
+
             var downloads = await _userDocumentRepository.GetByUserIdAndActionAsync(userId, "Download");
             return Ok(downloads.Select(ud => new
             {
@@ -46,9 +50,11 @@ namespace DocumentSharingAPI.Controllers
         }
 
         [HttpGet("library")]
-        public async Task<IActionResult> GetLibrary()
+        public async Task<IActionResult> GetLibrary([FromQuery] int userId)
         {
-            var userId = int.Parse(User.FindFirst("sub")?.Value ?? "0");
+            if (userId <= 0)
+                return BadRequest("Invalid user ID.");
+
             var library = await _userDocumentRepository.GetByUserIdAndActionAsync(userId, "Library");
             return Ok(library.Select(ud => new
             {
@@ -61,14 +67,16 @@ namespace DocumentSharingAPI.Controllers
         [HttpPost("library")]
         public async Task<IActionResult> AddToLibrary([FromBody] AddToLibraryModel model)
         {
-            var userId = int.Parse(User.FindFirst("sub")?.Value ?? "0");
-            var existing = await _userDocumentRepository.GetByUserIdDocumentIdAndActionAsync(userId, model.DocumentId, "Library");
+            if (model.UserId <= 0 || model.DocumentId <= 0)
+                return BadRequest("Invalid user ID or document ID.");
+
+            var existing = await _userDocumentRepository.GetByUserIdDocumentIdAndActionAsync(model.UserId, model.DocumentId, "Library");
             if (existing != null)
                 return BadRequest("Document already in library.");
 
             var userDocument = new UserDocument
             {
-                UserId = userId,
+                UserId = model.UserId,
                 DocumentId = model.DocumentId,
                 ActionType = "Library",
                 AddedAt = DateTime.Now
@@ -78,9 +86,11 @@ namespace DocumentSharingAPI.Controllers
         }
 
         [HttpDelete("library/{documentId}")]
-        public async Task<IActionResult> RemoveFromLibrary(int documentId)
+        public async Task<IActionResult> RemoveFromLibrary(int documentId, [FromQuery] int userId)
         {
-            var userId = int.Parse(User.FindFirst("sub")?.Value ?? "0");
+            if (userId <= 0 || documentId <= 0)
+                return BadRequest("Invalid user ID or document ID.");
+
             var existing = await _userDocumentRepository.GetByUserIdDocumentIdAndActionAsync(userId, documentId, "Library");
             if (existing == null)
                 return NotFound("Document not in library.");
@@ -92,6 +102,7 @@ namespace DocumentSharingAPI.Controllers
 
     public class AddToLibraryModel
     {
+        public int UserId { get; set; }
         public int DocumentId { get; set; }
     }
 }

@@ -21,7 +21,7 @@ namespace DocumentSharingAPI.Models
         public int DownloadCount { get; set; } = 0;
         public int PointsRequired { get; set; } = 0;
         public bool IsApproved { get; set; } = false;
-
+        public bool IsLock { get; set; } = false;
         public ICollection<Comment> Comments { get; set; }
         public ICollection<UserDocument> UserDocuments { get; set; }
     }

@@ -1,10 +1,8 @@
 ﻿using DocumentSharingAPI.Models;
 using DocumentSharingAPI.Repositories;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Threading.Tasks;
 using System.Linq;
-using Microsoft.EntityFrameworkCore;
 
 namespace DocumentSharingAPI.Controllers
 {
@@ -28,7 +26,7 @@ namespace DocumentSharingAPI.Controllers
         {
             var post = await _postRepository.GetByIdAsync(postId);
             if (post == null)
-                return NotFound("Post not found.");
+                return NotFound("Bài viết không tồn tại.");
 
             var comments = await _postCommentRepository.GetByPostIdAsync(postId);
             var commentDtos = comments.Select(c => new
@@ -48,41 +46,21 @@ namespace DocumentSharingAPI.Controllers
         {
             var post = await _postRepository.GetByIdAsync(model.PostId);
             if (post == null)
-                return BadRequest("Post not found.");
+                return BadRequest("Bài viết không tồn tại.");
 
-            // Lấy FirebaseUid từ token (nếu có)
-            var firebaseUid = User.FindFirst("sub")?.Value;
-            if (string.IsNullOrEmpty(firebaseUid))
-            {
-                // Nếu không có token, yêu cầu UserId từ body
-                if (model.UserId == null || model.UserId <= 0)
-                    return BadRequest("UserId is required.");
-            }
+            // Bắt buộc phải có UserId trong body
+            if (model.UserId == null || model.UserId <= 0)
+                return BadRequest("UserId là bắt buộc.");
 
-            int userId;
-            if (!string.IsNullOrEmpty(firebaseUid))
-            {
-                // Tìm user dựa trên FirebaseUid
-                var user = await _context.Users.FirstOrDefaultAsync(u => u.FirebaseUid == firebaseUid);
-                if (user == null)
-                    return BadRequest("User not found.");
-
-                userId = user.UserId;
-            }
-            else
-            {
-                // Nếu không có token, sử dụng UserId từ body
-                userId = model.UserId.Value;
-            }
-
-            var userCheck = await _context.Users.FindAsync(userId);
-            if (userCheck == null)
-                return BadRequest("User not found.");
+            // Kiểm tra UserId có tồn tại trong cơ sở dữ liệu
+            var user = await _context.Users.FindAsync(model.UserId);
+            if (user == null)
+                return BadRequest("Người dùng không tồn tại.");
 
             var comment = new PostComment
             {
                 PostId = model.PostId,
-                UserId = userId,
+                UserId = model.UserId.Value,
                 Content = model.Content,
                 CreatedAt = DateTime.Now
             };
@@ -94,7 +72,7 @@ namespace DocumentSharingAPI.Controllers
                 comment.Content,
                 comment.CreatedAt,
                 comment.UserId,
-                UserEmail = userCheck.Email
+                UserEmail = user?.Email ?? "Ẩn danh"
             });
         }
 
@@ -105,15 +83,6 @@ namespace DocumentSharingAPI.Controllers
             if (comment == null)
                 return NotFound();
 
-            // Lấy FirebaseUid từ token (nếu có)
-            var firebaseUid = User.FindFirst("sub")?.Value;
-            if (string.IsNullOrEmpty(firebaseUid))
-                return BadRequest("User authentication required to delete comment.");
-
-            var user = await _context.Users.FirstOrDefaultAsync(u => u.FirebaseUid == firebaseUid);
-            if (user == null || (comment.UserId != user.UserId && !User.IsInRole("Admin")))
-                return Forbid("You are not authorized to delete this comment.");
-
             await _postCommentRepository.DeleteAsync(id);
             return NoContent();
         }
@@ -123,6 +92,6 @@ namespace DocumentSharingAPI.Controllers
     {
         public int PostId { get; set; }
         public string Content { get; set; }
-        public int? UserId { get; set; } // Thêm UserId để frontend gửi
+        public int? UserId { get; set; } // UserId bắt buộc từ body
     }
 }
