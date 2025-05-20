@@ -1,4 +1,4 @@
-﻿ using DocumentSharingAPI.Models;
+﻿using DocumentSharingAPI.Models;
 
 namespace DocumentSharingAPI.Repositories
 {
@@ -10,5 +10,8 @@ namespace DocumentSharingAPI.Repositories
         Task ApproveDocumentAsync(int id);
         Task IncrementDownloadCountAsync(int id);
         Task<(IEnumerable<Document>, int)> GetPagedAsync(int page, int pageSize, string keyword, int? categoryId, string fileType, string sortBy);
+        new Task DeleteAsync(int id); // Thêm từ khóa new
+        Task<Document> GetTopDownloadedDocumentAsync();
+        Task UpdateLockStatusAsync(int documentId, bool isLocked);
     }
 }

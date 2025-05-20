@@ -65,7 +65,7 @@ namespace DocumentSharingAPI.Controllers
                     Email = user.Email,
                     FullName = user.FullName,
                     CheckAdmin = user.IsAdmin,
-                    Points = user.Points // Thêm Points
+                    Points = user.Points
                 }
             });
         }
@@ -126,19 +126,15 @@ namespace DocumentSharingAPI.Controllers
         {
             try
             {
-                // Tìm người dùng cần khóa/mở khóa
                 var user = await _userRepository.GetByIdAsync(userId);
                 if (user == null)
                     return NotFound("User not found.");
 
-                // Không cho phép khóa/mở khóa tài khoản admin
                 if (user.IsAdmin)
                     return BadRequest("Cannot lock/unlock an admin account.");
 
-                // Cập nhật trạng thái khóa/mở khóa
                 await _userRepository.UpdateLockStatusAsync(userId, model.IsLocked);
 
-                // Nếu khóa tài khoản, vô hiệu hóa phiên đăng nhập trên Firebase (nếu cần)
                 if (model.IsLocked)
                 {
                     try
@@ -170,42 +166,36 @@ namespace DocumentSharingAPI.Controllers
             await _userRepository.UpdatePointsAsync(id, model.Points);
             return Ok(new { Message = "Points updated", Points = user.Points, Level = user.Level });
         }
+
         [HttpPost("{id}/avatar")]
         public async Task<IActionResult> UploadAvatar(int id, IFormFile file)
         {
             try
             {
-                // Kiểm tra người dùng
                 var user = await _userRepository.GetByIdAsync(id);
                 if (user == null)
                     return NotFound(new { message = "Người dùng không tồn tại." });
 
-                // Kiểm tra file
                 if (file == null || file.Length == 0)
                     return BadRequest(new { message = "Không có file được tải lên." });
 
-                // Kiểm tra định dạng file (chỉ cho phép ảnh)
                 var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif" };
                 var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
                 if (!allowedExtensions.Contains(extension))
                     return BadRequest(new { message = "Định dạng file không được hỗ trợ. Chỉ hỗ trợ .jpg, .jpeg, .png, .gif." });
 
-                // Đặt tên file duy nhất (dùng UserId và timestamp)
                 var fileName = $"{id}_{DateTime.Now.Ticks}{extension}";
                 var uploadsFolder = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "avatars");
                 var filePath = Path.Combine(uploadsFolder, fileName);
 
-                // Tạo thư mục nếu chưa tồn tại
                 if (!Directory.Exists(uploadsFolder))
                     Directory.CreateDirectory(uploadsFolder);
 
-                // Lưu file
                 using (var stream = new FileStream(filePath, FileMode.Create))
                 {
                     await file.CopyToAsync(stream);
                 }
 
-                // Cập nhật AvatarUrl
                 user.AvatarUrl = $"/avatars/{fileName}";
                 await _userRepository.UpdateAsync(user);
 
@@ -220,6 +210,7 @@ namespace DocumentSharingAPI.Controllers
                 return StatusCode(500, new { message = $"Lỗi server: {ex.Message}" });
             }
         }
+
         [HttpGet("ranking")]
         public async Task<IActionResult> GetRanking([FromQuery] int limit = 10)
         {
@@ -231,6 +222,42 @@ namespace DocumentSharingAPI.Controllers
                 u.Points,
                 DocumentsUploaded = u.UploadedDocuments?.Count ?? 0
             }));
+        }
+
+        // Thêm endpoint mới: Người có nhiều comment nhất
+        [HttpGet("top-commenter")]
+        public async Task<IActionResult> GetTopCommenter()
+        {
+            try
+            {
+                var topCommenter = await _userRepository.GetTopCommenterAsync();
+                if (topCommenter == null)
+                    return NotFound("Không có người dùng nào có bình luận.");
+
+                return Ok(topCommenter);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Internal server error: {ex.Message}");
+            }
+        }
+
+        // Thêm endpoint mới: Người có nhiều điểm nhất
+        [HttpGet("top-points")]
+        public async Task<IActionResult> GetTopPointsUser()
+        {
+            try
+            {
+                var topUser = await _userRepository.GetTopPointsUserAsync();
+                if (topUser == null)
+                    return NotFound("Không có người dùng nào có điểm.");
+
+                return Ok(topUser);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Internal server error: {ex.Message}");
+            }
         }
     }
 

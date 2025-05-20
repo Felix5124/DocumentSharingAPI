@@ -1,7 +1,5 @@
 ﻿using DocumentSharingAPI.Models;
 using DocumentSharingAPI.Repositories;
-using iText.Kernel.Pdf.Canvas.Parser;
-using iText.Kernel.Pdf;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System;
@@ -59,6 +57,7 @@ namespace DocumentSharingAPI.Controllers
                     d.FileType,
                     d.PointsRequired,
                     d.IsApproved,
+                    d.IsLock, // Thêm trạng thái khóa
                     d.UploadedBy,
                     Email = user?.Email ?? "Không xác định"
                 });
@@ -94,6 +93,7 @@ namespace DocumentSharingAPI.Controllers
                 document.DownloadCount,
                 document.PointsRequired,
                 document.IsApproved,
+                document.IsLock, // Thêm trạng thái khóa
                 document.Comments,
                 document.UserDocuments
             });
@@ -127,7 +127,8 @@ namespace DocumentSharingAPI.Controllers
                 UploadedBy = model.UploadedBy,
                 UploadedAt = DateTime.Now,
                 PointsRequired = model.PointsRequired,
-                IsApproved = false
+                IsApproved = false,
+                IsLock = false // Mặc định tài liệu mới không bị khóa
             };
             await _documentRepository.AddAsync(document);
             Console.WriteLine($"Document created with ID: {document.DocumentId}");
@@ -147,7 +148,6 @@ namespace DocumentSharingAPI.Controllers
                 return NotFound("Tài liệu không tồn tại.");
             }
 
-            // Kiểm tra danh mục
             var category = await _categoryRepository.GetByIdAsync(model.CategoryId);
             if (category == null)
             {
@@ -155,7 +155,6 @@ namespace DocumentSharingAPI.Controllers
                 return BadRequest("Danh mục không hợp lệ.");
             }
 
-            // Kiểm tra tiêu đề trùng lặp (ngoại trừ tài liệu hiện tại)
             var existingDocument = await _documentRepository.GetByTitleAsync(model.Title);
             if (existingDocument != null && existingDocument.DocumentId != id)
             {
@@ -163,17 +162,13 @@ namespace DocumentSharingAPI.Controllers
                 return BadRequest("Tiêu đề tài liệu đã tồn tại.");
             }
 
-            // Cập nhật metadata
             document.Title = model.Title ?? document.Title;
             document.Description = model.Description ?? document.Description;
             document.CategoryId = model.CategoryId != 0 ? model.CategoryId : document.CategoryId;
             document.PointsRequired = model.PointsRequired != 0 ? model.PointsRequired : document.PointsRequired;
-            // Không cập nhật UploadedBy, giữ nguyên giá trị hiện tại
 
-            // Xử lý file mới nếu có
             if (model.File != null && model.File.Length > 0)
             {
-                // Kiểm tra định dạng file
                 var allowedExtensions = new[] { ".pdf", ".docx", ".txt" };
                 var extension = Path.GetExtension(model.File.FileName).ToLower();
                 if (!allowedExtensions.Contains(extension))
@@ -182,7 +177,6 @@ namespace DocumentSharingAPI.Controllers
                     return BadRequest("Định dạng file không hợp lệ. Chỉ chấp nhận PDF, DOCX, và TXT.");
                 }
 
-                // Xóa file cũ nếu tồn tại
                 if (!string.IsNullOrEmpty(document.FileUrl))
                 {
                     var oldFilePath = Path.Combine(Directory.GetCurrentDirectory(), document.FileUrl);
@@ -200,7 +194,6 @@ namespace DocumentSharingAPI.Controllers
                     }
                 }
 
-                // Lưu file mới
                 var fileName = $"{Guid.NewGuid()}_{Path.GetFileName(model.File.FileName)}";
                 var filePath = Path.Combine(Directory.GetCurrentDirectory(), "Files", fileName);
                 using (var stream = new FileStream(filePath, FileMode.Create))
@@ -208,7 +201,6 @@ namespace DocumentSharingAPI.Controllers
                     await model.File.CopyToAsync(stream);
                 }
 
-                // Cập nhật thông tin file
                 document.FileUrl = $"Files/{fileName}";
                 document.FileType = extension.TrimStart('.');
                 document.FileSize = model.File.Length;
@@ -224,34 +216,46 @@ namespace DocumentSharingAPI.Controllers
         [HttpDelete("{id}")]
         public async Task<IActionResult> Delete(int id)
         {
-            var document = await _documentRepository.GetByIdAsync(id);
-            if (document == null)
+            try
             {
-                Console.WriteLine($"Document with ID {id} not found.");
-                return NotFound("Tài liệu không tồn tại.");
-            }
-
-            // Xóa file nếu tồn tại
-            if (!string.IsNullOrEmpty(document.FileUrl))
-            {
-                var filePath = Path.Combine(Directory.GetCurrentDirectory(), document.FileUrl);
-                if (System.IO.File.Exists(filePath))
+                Console.WriteLine($"Attempting to delete document with ID: {id}");
+                var document = await _documentRepository.GetByIdAsync(id);
+                if (document == null)
                 {
-                    try
+                    Console.WriteLine($"Document with ID {id} not found.");
+                    return NotFound("Tài liệu không tồn tại.");
+                }
+
+                if (!string.IsNullOrEmpty(document.FileUrl))
+                {
+                    var filePath = Path.Combine(Directory.GetCurrentDirectory(), document.FileUrl);
+                    if (System.IO.File.Exists(filePath))
                     {
-                        System.IO.File.Delete(filePath);
-                        Console.WriteLine($"Deleted file: {filePath}");
+                        try
+                        {
+                            System.IO.File.Delete(filePath);
+                            Console.WriteLine($"Deleted file: {filePath}");
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"Error deleting file {filePath}: {ex.Message}");
+                        }
                     }
-                    catch (Exception ex)
+                    else
                     {
-                        Console.WriteLine($"Error deleting file {filePath}: {ex.Message}");
+                        Console.WriteLine($"File not found: {filePath}");
                     }
                 }
-            }
 
-            await _documentRepository.DeleteAsync(id);
-            Console.WriteLine($"Document {id} deleted successfully.");
-            return NoContent();
+                await _documentRepository.DeleteAsync(id);
+                Console.WriteLine($"Document {id} deleted successfully.");
+                return NoContent();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error deleting document {id}: {ex.Message}");
+                return StatusCode(500, $"Lỗi server: {ex.Message}");
+            }
         }
 
         [HttpPost("upload")]
@@ -278,7 +282,6 @@ namespace DocumentSharingAPI.Controllers
                 return BadRequest("Tiêu đề tài liệu đã tồn tại.");
             }
 
-            // Kiểm tra định dạng file
             var allowedExtensions = new[] { ".pdf", ".docx", ".txt" };
             var extension = Path.GetExtension(model.File.FileName).ToLower();
             if (!allowedExtensions.Contains(extension))
@@ -305,12 +308,12 @@ namespace DocumentSharingAPI.Controllers
                 UploadedBy = model.UploadedBy,
                 UploadedAt = DateTime.Now,
                 PointsRequired = model.PointsRequired,
-                IsApproved = false
+                IsApproved = false,
+                IsLock = false // Mặc định tài liệu mới không bị khóa
             };
             await _documentRepository.AddAsync(document);
             Console.WriteLine($"Document created with ID: {document.DocumentId}");
 
-            // Thêm vào UserDocument với ActionType = Upload
             var userDocument = new UserDocument
             {
                 UserId = model.UploadedBy,
@@ -320,10 +323,8 @@ namespace DocumentSharingAPI.Controllers
             };
             await _userDocumentRepository.AddAsync(userDocument);
 
-            // Cộng điểm
             await _userRepository.UpdatePointsAsync(model.UploadedBy, 10);
 
-            // Gửi thông báo cho người theo dõi
             var follows = await _context.Follows
                 .Where(f => f.FollowedUserId == model.UploadedBy || f.CategoryId == model.CategoryId)
                 .ToListAsync();
@@ -349,7 +350,6 @@ namespace DocumentSharingAPI.Controllers
                 await _notificationRepository.AddAsync(notification);
             }
 
-            // Gán huy hiệu
             var uploadCount = await _context.Documents.CountAsync(d => d.UploadedBy == model.UploadedBy);
             if (uploadCount >= 5)
             {
@@ -422,6 +422,7 @@ namespace DocumentSharingAPI.Controllers
                         d.DownloadCount,
                         d.PointsRequired,
                         d.IsApproved,
+                        d.IsLock, // Thêm trạng thái khóa
                         d.Comments,
                         d.UserDocuments
                     });
@@ -510,7 +511,8 @@ namespace DocumentSharingAPI.Controllers
                         d.UploadedAt,
                         d.DownloadCount,
                         d.PointsRequired,
-                        d.IsApproved
+                        d.IsApproved,
+                        d.IsLock // Thêm trạng thái khóa
                     })
                     .ToListAsync();
 
@@ -540,6 +542,9 @@ namespace DocumentSharingAPI.Controllers
 
                 if (!document.IsApproved)
                     return BadRequest(new { message = "Tài liệu chưa được duyệt." });
+
+                if (document.IsLock)
+                    return BadRequest(new { message = "Tài liệu đã bị khóa." }); // Kiểm tra trạng thái khóa
 
                 var user = await _userRepository.GetByIdAsync(userId);
                 if (user == null)
@@ -594,6 +599,12 @@ namespace DocumentSharingAPI.Controllers
                 return BadRequest("Tài liệu chưa được duyệt.");
             }
 
+            if (document.IsLock)
+            {
+                Console.WriteLine($"Document {id} is locked.");
+                return BadRequest("Tài liệu đã bị khóa."); // Kiểm tra trạng thái khóa
+            }
+
             var filePath = Path.Combine(Directory.GetCurrentDirectory(), document.FileUrl);
             if (!System.IO.File.Exists(filePath))
             {
@@ -616,6 +627,93 @@ namespace DocumentSharingAPI.Controllers
             {
                 Console.WriteLine($"Error generating preview for document {id}: {ex.Message}");
                 return BadRequest($"Lỗi khi tạo xem trước: {ex.Message}");
+            }
+        }
+
+        [HttpGet("top-downloaded")]
+        public async Task<IActionResult> GetTopDownloadedDocument()
+        {
+            try
+            {
+                var topDocument = await _documentRepository.GetTopDownloadedDocumentAsync();
+                if (topDocument == null)
+                    return NotFound("Không có tài liệu nào được tải.");
+
+                return Ok(topDocument);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Internal server error: {ex.Message}");
+            }
+        }
+        [HttpGet("statistics")]
+        public async Task<IActionResult> GetStatistics()
+        {
+            try
+            {
+                // Tổng số người dùng
+                var totalUsers = await _context.Users.CountAsync();
+
+                // Tổng số tài liệu
+                var totalDocuments = await _context.Documents.CountAsync();
+
+                // Tổng số lượt tải về (đếm số hành động "Download" trong UserDocuments)
+                var totalDownloads = await _context.UserDocuments
+                    .Where(ud => ud.ActionType == "Download")
+                    .CountAsync();
+
+                return Ok(new
+                {
+                    TotalUsers = totalUsers,
+                    TotalDocuments = totalDocuments,
+                    TotalDownloads = totalDownloads
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error fetching statistics: {ex.Message}");
+                return StatusCode(500, $"Lỗi server: {ex.Message}");
+            }
+        }
+        // Thêm endpoint mới: Khóa/Mở khóa tài liệu
+        [HttpPut("{id}/lock")]
+        public async Task<IActionResult> LockUnlockDocument(int id, [FromBody] LockDocumentModel model)
+        {
+            try
+            {
+                var document = await _documentRepository.GetByIdAsync(id);
+                if (document == null)
+                    return NotFound("Tài liệu không tồn tại.");
+
+                await _documentRepository.UpdateLockStatusAsync(id, model.IsLocked);
+
+                // Gửi thông báo cho người upload tài liệu
+                var notification = new Notification
+                {
+                    UserId = document.UploadedBy,
+                    Message = $"Tài liệu '{document.Title}' của bạn đã được {(model.IsLocked ? "khóa" : "mở khóa")}.",
+                    DocumentId = document.DocumentId,
+                    SentAt = DateTime.Now,
+                    IsRead = false
+                };
+
+                const int MaxNotificationsPerUser = 100;
+                var currentCount = await _notificationRepository.CountByUserIdAsync(document.UploadedBy);
+                if (currentCount >= MaxNotificationsPerUser)
+                {
+                    int countToDelete = currentCount - MaxNotificationsPerUser + 1;
+                    await _notificationRepository.DeleteOldestByUserIdAsync(document.UploadedBy, countToDelete);
+                }
+
+                await _notificationRepository.AddAsync(notification);
+                Console.WriteLine($"Document {id} {(model.IsLocked ? "locked" : "unlocked")} and notification sent.");
+
+                return Ok(new { Message = $"Tài liệu đã được {(model.IsLocked ? "khóa" : "mở khóa")} thành công." });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error while {(model.IsLocked ? "locking" : "unlocking")} document {id}: {ex.Message}");
+                return StatusCode(500, $"Lỗi server: {ex.Message}");
             }
         }
     }
@@ -653,5 +751,11 @@ namespace DocumentSharingAPI.Controllers
         public string SortBy { get; set; } = "UploadedAt";
         public int Page { get; set; } = 1;
         public int PageSize { get; set; } = 10;
+    }
+
+    // Thêm model cho khóa/mở khóa tài liệu
+    public class LockDocumentModel
+    {
+        public bool IsLocked { get; set; }
     }
 }

@@ -1,5 +1,8 @@
 ﻿using DocumentSharingAPI.Models;
 using Microsoft.EntityFrameworkCore;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
 
 namespace DocumentSharingAPI.Repositories
 {
@@ -29,7 +32,6 @@ namespace DocumentSharingAPI.Repositories
             if (user.Points < 0)
                 user.Points = 0;
 
-            // Logic cấp bậc (giữ nguyên theo yêu cầu)
             if (user.Points >= 1000)
                 user.Level = "Master";
             else if (user.Points >= 500)
@@ -67,6 +69,49 @@ namespace DocumentSharingAPI.Repositories
         public new async Task<User> GetByIdAsync(int id)
         {
             return await _context.Users.FindAsync(id);
+        }
+
+        // Thêm phương thức: Người có nhiều comment nhất
+        public async Task<User> GetTopCommenterAsync()
+        {
+            var topCommenter = await _context.Users
+                .Join(_context.Comments,
+                      user => user.UserId,
+                      comment => comment.UserId,
+                      (user, comment) => new { user, comment })
+                .GroupBy(x => new { x.user.UserId, x.user.Email })
+                .Select(g => new
+                {
+                    UserId = g.Key.UserId,
+                    Email = g.Key.Email,
+                    CommentCount = g.Count()
+                })
+                .OrderByDescending(x => x.CommentCount)
+                .FirstOrDefaultAsync();
+
+            if (topCommenter == null)
+                return null;
+
+            return new User
+            {
+                UserId = topCommenter.UserId,
+                Email = topCommenter.Email,
+                CommentCount = topCommenter.CommentCount
+            };
+        }
+
+        // Thêm phương thức: Người có nhiều điểm nhất
+        public async Task<User> GetTopPointsUserAsync()
+        {
+            return await _context.Users
+                .OrderByDescending(u => u.Points)
+                .Select(u => new User
+                {
+                    UserId = u.UserId,
+                    Email = u.Email,
+                    Points = u.Points
+                })
+                .FirstOrDefaultAsync();
         }
     }
 }
