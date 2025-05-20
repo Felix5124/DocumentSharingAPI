@@ -1,6 +1,5 @@
 ﻿using DocumentSharingAPI.Models;
 using DocumentSharingAPI.Repositories;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Threading.Tasks;
 
@@ -36,19 +35,22 @@ namespace DocumentSharingAPI.Controllers
         }
 
         [HttpPost]
-        //[Authorize]
         public async Task<IActionResult> Create([FromBody] PostModel model)
         {
-            var userId = int.Parse(User.FindFirst("sub")?.Value ?? "0");
-            var user = await _context.Users.FindAsync(userId);
+            // Bắt buộc phải có UserId trong body
+            if (model.UserId == null || model.UserId <= 0)
+                return BadRequest("UserId là bắt buộc.");
+
+            // Kiểm tra UserId có tồn tại trong cơ sở dữ liệu
+            var user = await _context.Users.FindAsync(model.UserId);
             if (user == null)
-                return Unauthorized();
+                return BadRequest("Người dùng không tồn tại.");
 
             var post = new Post
             {
                 Title = model.Title,
                 Content = model.Content,
-                UserId = userId,
+                UserId = model.UserId.Value,
                 CreatedAt = DateTime.Now
             };
             await _postRepository.AddAsync(post);
@@ -56,16 +58,11 @@ namespace DocumentSharingAPI.Controllers
         }
 
         [HttpDelete("{id}")]
-        //[Authorize]
         public async Task<IActionResult> Delete(int id)
         {
             var post = await _postRepository.GetByIdAsync(id);
             if (post == null)
                 return NotFound();
-
-            var userId = int.Parse(User.FindFirst("sub")?.Value ?? "0");
-            if (post.UserId != userId && !User.IsInRole("Admin"))
-                return Forbid();
 
             await _postRepository.DeleteAsync(id);
             return NoContent();
@@ -76,5 +73,6 @@ namespace DocumentSharingAPI.Controllers
     {
         public string Title { get; set; }
         public string Content { get; set; }
+        public int? UserId { get; set; } // UserId bắt buộc từ body
     }
 }

@@ -20,6 +20,7 @@ namespace DocumentSharingAPI.Models
         public bool IsAdmin { get; set; } = false;
         public bool IsLocked { get; set; } = false;
         public DateTime CreatedAt { get; set; } = DateTime.Now;
+        public int CommentCount { get; set; }
 
         // Quan hệ
         public ICollection<Document> UploadedDocuments { get; set; }
