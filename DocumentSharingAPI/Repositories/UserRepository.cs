@@ -113,5 +113,107 @@ namespace DocumentSharingAPI.Repositories
                 })
                 .FirstOrDefaultAsync();
         }
+
+        public async Task<IEnumerable<UserRankingItemDto>> GetTopUsersByPointsAsync(int limit)
+        {
+            return await _context.Users
+                .OrderByDescending(u => u.Points)
+                .Take(limit)
+                .Select(u => new UserRankingItemDto
+                {
+                    UserId = u.UserId,
+                    FullName = u.FullName,
+                    Email = u.Email,
+                    AvatarUrl = u.AvatarUrl,
+                    Value = u.Points
+                })
+                .ToListAsync();
+        }
+
+        public async Task<IEnumerable<UserRankingItemDto>> GetTopUsersByUploadsAsync(int limit)
+        {
+            return await _context.Users
+                .OrderByDescending(u => u.UploadedDocuments.Count(d => d.IsApproved && !d.IsLock)) // Chỉ đếm tài liệu đã duyệt và không khóa
+                .Take(limit)
+                .Select(u => new UserRankingItemDto
+                {
+                    UserId = u.UserId,
+                    FullName = u.FullName,
+                    Email = u.Email,
+                    AvatarUrl = u.AvatarUrl,
+                    Value = u.UploadedDocuments.Count(d => d.IsApproved && !d.IsLock)
+                })
+                .ToListAsync();
+        }
+
+        public async Task<IEnumerable<UserRankingItemDto>> GetTopUsersByCommentsAsync(int limit)
+        {
+            return await _context.Comments
+                .GroupBy(c => c.UserId)
+                .Select(g => new { UserId = g.Key, CommentCount = g.Count() })
+                .OrderByDescending(x => x.CommentCount)
+                .Take(limit)
+                .Join(_context.Users,
+                      commentGroup => commentGroup.UserId,
+                      user => user.UserId,
+                      (commentGroup, user) => new UserRankingItemDto
+                      {
+                          UserId = user.UserId,
+                          FullName = user.FullName,
+                          Email = user.Email,
+                          AvatarUrl = user.AvatarUrl,
+                          Value = commentGroup.CommentCount
+                      })
+                .ToListAsync();
+        }
+
+        public async Task<IEnumerable<UserRankingItemDto>> GetTopUsersByDocumentDownloadsAsync(int limit)
+        {
+            try
+            {
+                // Bước 1: Tính toán tổng lượt tải cho mỗi user
+                var userDownloadStats = _context.Documents
+                    .Where(d => d.IsApproved && !d.IsLock)
+                    .GroupBy(d => d.UploadedBy) // Group theo UserId của người tải lên
+                    .Select(g => new
+                    {
+                        UserId = g.Key,
+                        TotalDownloads = g.Sum(doc => doc.DownloadCount) // Đảm bảo xử lý null cho DownloadCount
+                    })
+                    .OrderByDescending(x => x.TotalDownloads)
+                    .Take(limit); // Lấy top N user dựa trên lượt tải
+
+                // Bước 2: Join kết quả với bảng Users để lấy thông tin chi tiết
+                // và chiếu (project) vào UserRankingItemDto
+                var result = await userDownloadStats
+                    .Join(
+                        _context.Users, // Bảng Users
+                        stat => stat.UserId, // Khóa từ userDownloadStats (là UploadedBy)
+                        user => user.UserId,  // Khóa từ Users
+                        (stat, user) => new UserRankingItemDto // Kết quả sau khi join
+                        {
+                            UserId = user.UserId,
+                            FullName = user.FullName,
+                            Email = user.Email,
+                            AvatarUrl = user.AvatarUrl,
+                            Value = stat.TotalDownloads
+                        }
+                    )
+                    .ToListAsync(); // Thực thi truy vấn và lấy kết quả
+
+                // Vì Join có thể thay đổi thứ tự, nếu cần đảm bảo thứ tự chính xác theo TotalDownloads,
+                // bạn có thể sắp xếp lại ở client hoặc sắp xếp lại kết quả cuối cùng này.
+                // Tuy nhiên, OrderByDescending ở userDownloadStats thường đã đủ.
+                // Nếu muốn chắc chắn, có thể thêm: result = result.OrderByDescending(r => r.Value).ToList();
+
+                return result;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"ERROR in GetTopUsersByDocumentDownloadsAsync: {ex.ToString()}");
+                // Log lỗi này (ví dụ: sử dụng ILogger)
+                throw; // Ném lại lỗi để controller xử lý
+            }
+        }
     }
 }
