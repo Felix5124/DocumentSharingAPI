@@ -52,6 +52,7 @@ namespace DocumentSharingAPI.Controllers
                     d.DocumentId,
                     d.Title,
                     d.Description,
+                    d.CoverImageUrl,
                     d.UploadedAt,
                     d.DownloadCount,
                     d.FileType,
@@ -83,6 +84,7 @@ namespace DocumentSharingAPI.Controllers
                 document.Title,
                 document.Description,
                 document.FileUrl,
+                document.CoverImageUrl,
                 document.FileType,
                 document.FileSize,
                 document.CategoryId,
@@ -167,10 +169,34 @@ namespace DocumentSharingAPI.Controllers
             document.CategoryId = model.CategoryId != 0 ? model.CategoryId : document.CategoryId;
             document.PointsRequired = model.PointsRequired != 0 ? model.PointsRequired : document.PointsRequired;
 
+            if (model.CoverImage != null && model.CoverImage.Length > 0)
+            {
+                string newCoverPath = await SaveCoverImageAsync(model.CoverImage);
+                if (newCoverPath == "INVALID_TYPE")
+                {
+                    return BadRequest("Định dạng ảnh bìa không hợp lệ. Chỉ chấp nhận JPG, JPEG, PNG, GIF, TIFF, TIF, HEIC, HEIF.");
+                }
+                if (!string.IsNullOrEmpty(newCoverPath))
+                {
+                    // Xoá cái hình cũ nếu cho là default hoặc đã tồn tại
+                    if (!string.IsNullOrEmpty(document.CoverImageUrl) && !document.CoverImageUrl.Contains("default-cover"))
+                    {
+                        var oldCoverFilePath = Path.Combine(Directory.GetCurrentDirectory(), document.CoverImageUrl);
+                        if (System.IO.File.Exists(oldCoverFilePath))
+                        {
+                            try { System.IO.File.Delete(oldCoverFilePath); }
+                            catch (Exception ex) { Console.WriteLine($"Error deleting old cover file {oldCoverFilePath}: {ex.Message}"); }
+                        }
+                    }
+                    document.CoverImageUrl = newCoverPath;
+                }
+            }
+
             if (model.File != null && model.File.Length > 0)
             {
                 var allowedExtensions = new[] { ".pdf", ".docx", ".txt" };
                 var extension = Path.GetExtension(model.File.FileName).ToLower();
+
                 if (!allowedExtensions.Contains(extension))
                 {
                     Console.WriteLine($"Invalid file extension: {extension}");
@@ -297,6 +323,21 @@ namespace DocumentSharingAPI.Controllers
                 await model.File.CopyToAsync(stream);
             }
 
+            // Hình ảnh mặc định khi không có hình ảnh bìa
+            string coverImageUrl = "ImageCovers/cat.jpg";
+            if (model.CoverImage != null && model.CoverImage.Length > 0)
+            {
+                string uploadedCoverPath = await SaveCoverImageAsync(model.CoverImage);
+                if (uploadedCoverPath == "INVALID_TYPE")
+                {
+                    return BadRequest("Định dạng ảnh bìa không hợp lệ. Chỉ chấp nhận JPG, PNG, GIF, TIFF, TIF, HEIC, HEIF.");
+                }
+                if (!string.IsNullOrEmpty(uploadedCoverPath))
+                {
+                    coverImageUrl = uploadedCoverPath;
+                }
+            }
+
             var document = new Document
             {
                 Title = model.Title,
@@ -304,6 +345,7 @@ namespace DocumentSharingAPI.Controllers
                 FileUrl = $"Files/{fileName}",
                 FileType = extension.TrimStart('.'),
                 FileSize = model.File.Length,
+                CoverImageUrl = coverImageUrl,
                 CategoryId = model.CategoryId,
                 UploadedBy = model.UploadedBy,
                 UploadedAt = DateTime.Now,
@@ -412,6 +454,7 @@ namespace DocumentSharingAPI.Controllers
                         d.Title,
                         d.Description,
                         d.FileUrl,
+                        d.CoverImageUrl,
                         d.FileType,
                         d.FileSize,
                         d.CategoryId,
@@ -716,7 +759,79 @@ namespace DocumentSharingAPI.Controllers
                 return StatusCode(500, $"Lỗi server: {ex.Message}");
             }
         }
+
+        // Đề xuất tài liệu liên quan
+        [HttpGet("{id}/related")]
+        public async Task<IActionResult> GetRelatedDocuments(int id, [FromQuery] int count = 4)
+        {
+            var currentDocument = await _documentRepository.GetByIdAsync(id); 
+            if (currentDocument == null || currentDocument.CategoryId == 0)
+            {
+                return Ok(new List<object>());
+            }
+
+            var relatedDocumentsQuery = _context.Documents
+                .Where(d => d.CategoryId == currentDocument.CategoryId &&
+                            d.DocumentId != id &&
+                            d.IsApproved &&
+                            !d.IsLock) 
+                .OrderByDescending(d => d.DownloadCount) 
+                .Take(count);
+
+            var rawRelatedDocs = await relatedDocumentsQuery.ToListAsync();
+            var result = new List<object>();
+
+            foreach (var d in rawRelatedDocs)
+            {
+                var user = await _userRepository.GetByIdAsync(d.UploadedBy);
+                result.Add(new
+                {
+                    d.DocumentId,
+                    d.Title,
+                    d.CoverImageUrl,
+                    UploadedByEmail = user?.Email ?? "Không xác định"
+                });
+            }
+
+            return Ok(result);
+        }
+
+        // Phương thức lưu hình ảnh bìa
+        private async Task<string> SaveCoverImageAsync(IFormFile imageFile)
+        {
+            if (imageFile == null || imageFile.Length == 0)
+            {
+                return null;
+            }
+
+            var allowedImageExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".tiff", ".tif", ".heic", ".heif" };
+            var extension = Path.GetExtension(imageFile.FileName).ToLowerInvariant();
+
+            if (!allowedImageExtensions.Contains(extension))
+            {
+                Console.WriteLine($"Invalid cover image extension: {extension}");
+                return "INVALID_TYPE";
+            }
+
+            var coversDirectory = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "ImageCovers");
+            if (!Directory.Exists(coversDirectory))
+            {
+                Directory.CreateDirectory(coversDirectory);
+            }
+
+            var fileName = $"{Guid.NewGuid()}_{Path.GetFileName(imageFile.FileName)}";
+            var filePath = Path.Combine(coversDirectory, fileName);
+
+            using (var stream = new FileStream(filePath, FileMode.Create))
+            {
+                await imageFile.CopyToAsync(stream);
+            }
+
+            return $"ImageCovers/{fileName}";
+        }
+
     }
+    
 
     public class DocumentModel
     {
@@ -725,6 +840,7 @@ namespace DocumentSharingAPI.Controllers
         public string FileUrl { get; set; }
         public string FileType { get; set; }
         public long FileSize { get; set; }
+        public string? CoverImageUrl { get; set; }
         public int CategoryId { get; set; }
         public int UploadedBy { get; set; }
         public int PointsRequired { get; set; }
@@ -741,6 +857,7 @@ namespace DocumentSharingAPI.Controllers
         public int UploadedBy { get; set; }
         public int PointsRequired { get; set; }
         public IFormFile File { get; set; }
+        public IFormFile? CoverImage { get; set; }
     }
 
     public class SearchDocumentModel
