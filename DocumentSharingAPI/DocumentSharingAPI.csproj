@@ -26,9 +26,12 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Folder Include="Files\" />
     <Folder Include="wwwroot\avatars\" />
-    <Folder Include="wwwroot\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="wwwroot\ImageCovers\bfde0fb4-e1ca-4369-8233-55de22580dfa_Annotation 2025-04-11 204731.png" />
+    <None Include="wwwroot\ImageCovers\cat.jpg" />
   </ItemGroup>
 
 </Project>
