@@ -67,7 +67,7 @@ namespace DocumentSharingAPI.Controllers
             return Ok(result);
         }
 
-        [HttpGet("{id}")]
+        [HttpGet("{id:int}")]
         public async Task<IActionResult> GetById(int id)
         {
             var document = await _documentRepository.GetByIdAsync(id);
@@ -686,9 +686,46 @@ namespace DocumentSharingAPI.Controllers
             }
             catch (Exception ex)
             {
+                Console.WriteLine($"!!!! ERROR in GetTopDownloadedDocument: {ex.ToString()} !!!!");
                 return StatusCode(500, $"Internal server error: {ex.Message}");
             }
         }
+
+        [HttpGet("rankings/top-downloads")] 
+        public async Task<IActionResult> GetRankingsByTopDownloads([FromQuery] int limit = 5)
+        {
+            try
+            {
+
+                var topDocuments = await _context.Documents
+                    .Include(d => d.User)
+                    .Where(d => d.IsApproved && !d.IsLock)
+                    .OrderByDescending(d => d.DownloadCount)
+                    .Take(limit)
+                    .Select(d => new
+                    {
+                        d.DocumentId,
+                        d.Title,
+                        d.CoverImageUrl,
+                        d.DownloadCount,
+                        UploadedByUser = d.User != null ? new { d.User.FullName } : null
+                    })
+                    .ToListAsync();
+
+                if (topDocuments == null || !topDocuments.Any())
+                {
+                    return Ok(new List<object>());
+                }
+
+                return Ok(topDocuments);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error in GetRankingsByTopDownloads: {ex.ToString()}");
+                return StatusCode(500, $"Internal server error: {ex.Message}");
+            }
+        }
+
         [HttpGet("statistics")]
         public async Task<IActionResult> GetStatistics()
         {

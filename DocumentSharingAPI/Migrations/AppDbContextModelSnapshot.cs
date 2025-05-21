@@ -109,7 +109,6 @@ namespace DocumentSharingAPI.Migrations
                         .HasColumnType("int");
 
                     b.Property<string>("CoverImageUrl")
-                        .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
                     b.Property<string>("Description")
