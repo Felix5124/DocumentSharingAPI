@@ -224,6 +224,34 @@ namespace DocumentSharingAPI.Controllers
             }));
         }
 
+        [HttpGet("rankings/points")]
+        public async Task<IActionResult> GetRankingsByPoints([FromQuery] int limit = 10)
+        {
+            var users = await _userRepository.GetTopUsersByPointsAsync(limit);
+            return Ok(users);
+        }
+
+        [HttpGet("rankings/uploads")]
+        public async Task<IActionResult> GetRankingsByUploads([FromQuery] int limit = 10)
+        {
+            var users = await _userRepository.GetTopUsersByUploadsAsync(limit);
+            return Ok(users);
+        }
+
+        [HttpGet("rankings/comments")]
+        public async Task<IActionResult> GetRankingsByComments([FromQuery] int limit = 10)
+        {
+            var users = await _userRepository.GetTopUsersByCommentsAsync(limit);
+            return Ok(users);
+        }
+
+        [HttpGet("rankings/document-downloads")]
+        public async Task<IActionResult> GetRankingsByDocumentDownloads([FromQuery] int limit = 10)
+        {
+            var users = await _userRepository.GetTopUsersByDocumentDownloadsAsync(limit);
+            return Ok(users);
+        }
+
         // Thêm endpoint mới: Người có nhiều comment nhất
         [HttpGet("top-commenter")]
         public async Task<IActionResult> GetTopCommenter()
