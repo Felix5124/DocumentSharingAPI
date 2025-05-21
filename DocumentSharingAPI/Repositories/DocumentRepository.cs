@@ -113,7 +113,10 @@ namespace DocumentSharingAPI.Repositories
 
         public new async Task<Document> GetByIdAsync(int id)
         {
-            return await _context.Documents.FindAsync(id);
+            return await _context.Documents
+                .Include(d => d.Category)
+                .FirstOrDefaultAsync(d => d.DocumentId == id);
+
         }
 
         public async Task IncrementDownloadCountAsync(int id)
