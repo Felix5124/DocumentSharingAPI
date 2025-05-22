@@ -45,6 +45,59 @@ namespace DocumentSharingAPI.Controllers
             return Ok(new { Message = "User registered successfully. Please verify your email.", UserId = user.UserId });
         }
 
+        [HttpPost("authprovider-register")]
+        public async Task<IActionResult> AuthProviderRegister([FromBody] AuthProviderRegisterModel model)
+        {
+            if (model == null || string.IsNullOrWhiteSpace(model.FirebaseUid) || string.IsNullOrWhiteSpace(model.Email))
+            {
+                return BadRequest("Thông tin đăng ký không hợp lệ.");
+            }
+
+            var existingUserByUid = await _userRepository.GetByFirebaseUidAsync(model.FirebaseUid);
+            if (existingUserByUid != null)
+            {
+                // Trường hợp hiếm: người dùng đã tồn tại bằng UID nhưng không phải email? Hoặc race condition.
+                // Trả về người dùng hiện tại hoặc lỗi tùy theo logic của bạn.
+                return Ok(existingUserByUid);
+            }
+
+            var existingUserByEmail = await _userRepository.GetByEmailAsync(model.Email);
+            if (existingUserByEmail != null)
+            {
+                // Nếu email đã tồn tại nhưng FirebaseUid khác (ví dụ: đã đăng ký bằng email/pass trước đó)
+                // Bạn cần quyết định cách xử lý:
+                // 1. Báo lỗi "Email đã được sử dụng với phương thức đăng nhập khác".
+                // 2. Liên kết tài khoản Google này với tài khoản email/pass hiện có (cần cẩn thận).
+                // Hiện tại, chúng ta sẽ báo lỗi để đơn giản.
+                return Conflict(new { message = "Email này đã được đăng ký trong hệ thống với một tài khoản khác." });
+            }
+
+            var user = new User
+            {
+                FirebaseUid = model.FirebaseUid,
+                Email = model.Email,
+                FullName = model.FullName,
+                // AvatarUrl = model.AvatarUrl,
+                Points = 0, // Điểm khởi tạo
+                IsAdmin = false,
+                IsLocked = false,
+                CreatedAt = DateTime.UtcNow
+                // Các trường mặc định khác
+            };
+
+            await _userRepository.AddAsync(user); // Lưu người dùng vào DB cục bộ
+
+            // Lấy lại người dùng từ DB để đảm bảo có UserId và các thông tin khác được set đúng
+            var createdUser = await _userRepository.GetByFirebaseUidAsync(user.FirebaseUid);
+            if (createdUser == null)
+            {
+                // Lỗi không mong muốn
+                return StatusCode(StatusCodes.Status500InternalServerError, "Không thể tạo người dùng mới trong cơ sở dữ liệu.");
+            }
+            return Ok(createdUser); // Trả về thông tin người dùng đã tạo
+        }
+
+
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] LoginModel model)
         {
@@ -318,4 +371,12 @@ namespace DocumentSharingAPI.Controllers
     {
         public bool IsLocked { get; set; }
     }
+
+    public class AuthProviderRegisterModel
+    {
+        public string FirebaseUid { get; set; }
+        public string Email { get; set; }
+        public string FullName { get; set; }
+    }
+
 }
