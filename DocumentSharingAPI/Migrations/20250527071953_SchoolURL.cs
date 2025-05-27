@@ -5,25 +5,25 @@
 namespace DocumentSharingAPI.Migrations
 {
     /// <inheritdoc />
-    public partial class UpdateLockForDocument : Migration
+    public partial class SchoolURL : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.AddColumn<bool>(
-                name: "IsLock",
-                table: "Documents",
-                type: "bit",
+            migrationBuilder.AddColumn<string>(
+                name: "ExternalUrl",
+                table: "Schools",
+                type: "nvarchar(max)",
                 nullable: false,
-                defaultValue: false);
+                defaultValue: "");
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
             migrationBuilder.DropColumn(
-                name: "IsLock",
-                table: "Documents");
+                name: "ExternalUrl",
+                table: "Schools");
         }
     }
 }

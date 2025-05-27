@@ -210,6 +210,13 @@ builder.Services.AddSwaggerGen(c =>
 
 var app = builder.Build();
 
+// Thêm middleware để thiết lập Cross-Origin-Opener-Policy
+app.Use(async (context, next) =>
+{
+    context.Response.Headers["Cross-Origin-Opener-Policy"] = "unsafe-none";
+    context.Response.Headers["Cross-Origin-Embedder-Policy"] = "require-corp";
+    await next();
+});
 // Ensure Files directory exists
 var filesPath = Path.Combine(Directory.GetCurrentDirectory(), "Files");
 if (!Directory.Exists(filesPath))
