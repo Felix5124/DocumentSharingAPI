@@ -19,6 +19,7 @@ namespace DocumentSharingAPI.Models
         public DbSet<Post> Posts { get; set; }
         public DbSet<PostComment> PostComments { get; set; }
         public DbSet<Recommendation> Recommendations { get; set; }
+        public DbSet<School> Schools { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -100,6 +101,19 @@ namespace DocumentSharingAPI.Models
                 .HasOne(pc => pc.User)
                 .WithMany()
                 .HasForeignKey(pc => pc.UserId)
+                .OnDelete(DeleteBehavior.Restrict);
+            // Cấu hình quan hệ User-School
+            modelBuilder.Entity<User>()
+                .HasOne(u => u.School)
+                .WithMany()
+                .HasForeignKey(u => u.SchoolId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            // Cấu hình quan hệ Document-School
+            modelBuilder.Entity<Document>()
+                .HasOne(d => d.School)
+                .WithMany()
+                .HasForeignKey(d => d.SchoolId)
                 .OnDelete(DeleteBehavior.Restrict);
         }
     }

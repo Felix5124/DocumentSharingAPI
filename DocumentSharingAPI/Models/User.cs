@@ -14,7 +14,8 @@ namespace DocumentSharingAPI.Models
         public string Email { get; set; }
         public string FullName { get; set; }
         public string? AvatarUrl { get; set; }
-        public string? School { get; set; }
+        public int? SchoolId { get; set; } 
+        public School School { get; set; }
         public int Points { get; set; } = 0;
         public string Level { get; set; } = "Newbie";
         public bool IsAdmin { get; set; } = false;

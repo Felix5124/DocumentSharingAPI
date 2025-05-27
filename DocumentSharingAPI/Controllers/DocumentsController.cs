@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -58,7 +59,7 @@ namespace DocumentSharingAPI.Controllers
                     d.FileType,
                     d.PointsRequired,
                     d.IsApproved,
-                    d.IsLock, // Thêm trạng thái khóa
+                    d.IsLock,
                     d.UploadedBy,
                     Email = user?.Email ?? "Không xác định"
                 });
@@ -78,6 +79,8 @@ namespace DocumentSharingAPI.Controllers
             }
 
             var user = await _userRepository.GetByIdAsync(document.UploadedBy);
+            var school = user != null ? await _context.Schools.FindAsync(user.SchoolId) : null;
+
             return Ok(new
             {
                 document.DocumentId,
@@ -95,9 +98,10 @@ namespace DocumentSharingAPI.Controllers
                 document.DownloadCount,
                 document.PointsRequired,
                 document.IsApproved,
-                document.IsLock, // Thêm trạng thái khóa
+                document.IsLock,
                 document.Comments,
-                document.UserDocuments
+                document.UserDocuments,
+                School = school != null ? new { school.SchoolId, school.Name, school.LogoUrl } : null
             });
         }
 
@@ -130,7 +134,7 @@ namespace DocumentSharingAPI.Controllers
                 UploadedAt = DateTime.Now,
                 PointsRequired = model.PointsRequired,
                 IsApproved = false,
-                IsLock = false // Mặc định tài liệu mới không bị khóa
+                IsLock = false
             };
             await _documentRepository.AddAsync(document);
             Console.WriteLine($"Document created with ID: {document.DocumentId}");
@@ -178,7 +182,6 @@ namespace DocumentSharingAPI.Controllers
                 }
                 if (!string.IsNullOrEmpty(newCoverPath))
                 {
-                    // Xoá cái hình cũ nếu cho là default hoặc đã tồn tại
                     if (!string.IsNullOrEmpty(document.CoverImageUrl) && !document.CoverImageUrl.Contains("default-cover"))
                     {
                         var oldCoverFilePath = Path.Combine(Directory.GetCurrentDirectory(), document.CoverImageUrl);
@@ -294,11 +297,39 @@ namespace DocumentSharingAPI.Controllers
                 return BadRequest("Không có file được tải lên.");
             }
 
+            // Kiểm tra SchoolId
+            if (model.SchoolId == 0)
+            {
+                Console.WriteLine("SchoolId is missing or invalid.");
+                return BadRequest("Trường học không được để trống.");
+            }
+
+            var school = await _context.Schools.FindAsync(model.SchoolId);
+            if (school == null)
+            {
+                Console.WriteLine($"Invalid school ID: {model.SchoolId}");
+                return BadRequest("Trường học không hợp lệ.");
+            }
+
             var category = await _categoryRepository.GetByIdAsync(model.CategoryId);
             if (category == null)
             {
                 Console.WriteLine($"Invalid category ID: {model.CategoryId}");
                 return BadRequest("Danh mục không hợp lệ.");
+            }
+
+            var user = await _userRepository.GetByIdAsync(model.UploadedBy);
+            if (user == null)
+            {
+                Console.WriteLine($"Invalid user ID: {model.UploadedBy}");
+                return BadRequest("Người dùng không hợp lệ.");
+            }
+
+            // Kiểm tra user có SchoolId khớp với model.SchoolId
+            if (user.SchoolId != model.SchoolId)
+            {
+                Console.WriteLine($"User's SchoolId ({user.SchoolId}) does not match provided SchoolId ({model.SchoolId}).");
+                return BadRequest("Trường học không khớp với thông tin người dùng.");
             }
 
             var existingDocument = await _documentRepository.GetByTitleAsync(model.Title);
@@ -323,7 +354,6 @@ namespace DocumentSharingAPI.Controllers
                 await model.File.CopyToAsync(stream);
             }
 
-            // Hình ảnh mặc định khi không có hình ảnh bìa
             string coverImageUrl = "ImageCovers/cat.jpg";
             if (model.CoverImage != null && model.CoverImage.Length > 0)
             {
@@ -351,7 +381,8 @@ namespace DocumentSharingAPI.Controllers
                 UploadedAt = DateTime.Now,
                 PointsRequired = model.PointsRequired,
                 IsApproved = false,
-                IsLock = false // Mặc định tài liệu mới không bị khóa
+                IsLock = false,
+                SchoolId = model.SchoolId
             };
             await _documentRepository.AddAsync(document);
             Console.WriteLine($"Document created with ID: {document.DocumentId}");
@@ -448,6 +479,7 @@ namespace DocumentSharingAPI.Controllers
                 foreach (var d in documents)
                 {
                     var user = await _userRepository.GetByIdAsync(d.UploadedBy);
+                    var school = user != null ? await _context.Schools.FindAsync(user.SchoolId) : null;
                     result.Add(new
                     {
                         d.DocumentId,
@@ -465,9 +497,10 @@ namespace DocumentSharingAPI.Controllers
                         d.DownloadCount,
                         d.PointsRequired,
                         d.IsApproved,
-                        d.IsLock, // Thêm trạng thái khóa
+                        d.IsLock,
                         d.Comments,
-                        d.UserDocuments
+                        d.UserDocuments,
+                        School = school != null ? new { school.SchoolId, school.Name, school.LogoUrl } : null
                     });
                 }
 
@@ -555,7 +588,7 @@ namespace DocumentSharingAPI.Controllers
                         d.DownloadCount,
                         d.PointsRequired,
                         d.IsApproved,
-                        d.IsLock // Thêm trạng thái khóa
+                        d.IsLock
                     })
                     .ToListAsync();
 
@@ -587,7 +620,7 @@ namespace DocumentSharingAPI.Controllers
                     return BadRequest(new { message = "Tài liệu chưa được duyệt." });
 
                 if (document.IsLock)
-                    return BadRequest(new { message = "Tài liệu đã bị khóa." }); // Kiểm tra trạng thái khóa
+                    return BadRequest(new { message = "Tài liệu đã bị khóa." });
 
                 var user = await _userRepository.GetByIdAsync(userId);
                 if (user == null)
@@ -645,7 +678,7 @@ namespace DocumentSharingAPI.Controllers
             if (document.IsLock)
             {
                 Console.WriteLine($"Document {id} is locked.");
-                return BadRequest("Tài liệu đã bị khóa."); // Kiểm tra trạng thái khóa
+                return BadRequest("Tài liệu đã bị khóa.");
             }
 
             var filePath = Path.Combine(Directory.GetCurrentDirectory(), document.FileUrl);
@@ -691,12 +724,11 @@ namespace DocumentSharingAPI.Controllers
             }
         }
 
-        [HttpGet("rankings/top-downloads")] 
+        [HttpGet("rankings/top-downloads")]
         public async Task<IActionResult> GetRankingsByTopDownloads([FromQuery] int limit = 5)
         {
             try
             {
-
                 var topDocuments = await _context.Documents
                     .Include(d => d.User)
                     .Where(d => d.IsApproved && !d.IsLock)
@@ -731,13 +763,8 @@ namespace DocumentSharingAPI.Controllers
         {
             try
             {
-                // Tổng số người dùng
                 var totalUsers = await _context.Users.CountAsync();
-
-                // Tổng số tài liệu
                 var totalDocuments = await _context.Documents.CountAsync();
-
-                // Tổng số lượt tải về (đếm số hành động "Download" trong UserDocuments)
                 var totalDownloads = await _context.UserDocuments
                     .Where(ud => ud.ActionType == "Download")
                     .CountAsync();
@@ -755,7 +782,7 @@ namespace DocumentSharingAPI.Controllers
                 return StatusCode(500, $"Lỗi server: {ex.Message}");
             }
         }
-        // Thêm endpoint mới: Khóa/Mở khóa tài liệu
+
         [HttpPut("{id}/lock")]
         public async Task<IActionResult> LockUnlockDocument(int id, [FromBody] LockDocumentModel model)
         {
@@ -767,7 +794,6 @@ namespace DocumentSharingAPI.Controllers
 
                 await _documentRepository.UpdateLockStatusAsync(id, model.IsLocked);
 
-                // Gửi thông báo cho người upload tài liệu
                 var notification = new Notification
                 {
                     UserId = document.UploadedBy,
@@ -797,11 +823,10 @@ namespace DocumentSharingAPI.Controllers
             }
         }
 
-        // Đề xuất tài liệu liên quan
         [HttpGet("{id}/related")]
         public async Task<IActionResult> GetRelatedDocuments(int id, [FromQuery] int count = 4)
         {
-            var currentDocument = await _documentRepository.GetByIdAsync(id); 
+            var currentDocument = await _documentRepository.GetByIdAsync(id);
             if (currentDocument == null || currentDocument.CategoryId == 0)
             {
                 return Ok(new List<object>());
@@ -811,8 +836,8 @@ namespace DocumentSharingAPI.Controllers
                 .Where(d => d.CategoryId == currentDocument.CategoryId &&
                             d.DocumentId != id &&
                             d.IsApproved &&
-                            !d.IsLock) 
-                .OrderByDescending(d => d.DownloadCount) 
+                            !d.IsLock)
+                .OrderByDescending(d => d.DownloadCount)
                 .Take(count);
 
             var rawRelatedDocs = await relatedDocumentsQuery.ToListAsync();
@@ -833,7 +858,6 @@ namespace DocumentSharingAPI.Controllers
             return Ok(result);
         }
 
-        // Phương thức lưu hình ảnh bìa
         private async Task<string> SaveCoverImageAsync(IFormFile imageFile)
         {
             if (imageFile == null || imageFile.Length == 0)
@@ -866,9 +890,7 @@ namespace DocumentSharingAPI.Controllers
 
             return $"ImageCovers/{fileName}";
         }
-
     }
-    
 
     public class DocumentModel
     {
@@ -885,14 +907,16 @@ namespace DocumentSharingAPI.Controllers
 
     public class UploadDocumentModel
     {
-        [System.ComponentModel.DataAnnotations.Required(ErrorMessage = "Tiêu đề không được để trống")]
+        [Required(ErrorMessage = "Tiêu đề không được để trống")]
         public string Title { get; set; }
         public string Description { get; set; }
-        [System.ComponentModel.DataAnnotations.Required(ErrorMessage = "Danh mục không được để trống")]
+        [Required(ErrorMessage = "Danh mục không được để trống")]
         public int CategoryId { get; set; }
-        [System.ComponentModel.DataAnnotations.Required(ErrorMessage = "Người tải lên không được để trống")]
+        [Required(ErrorMessage = "Người tải lên không được để trống")]
         public int UploadedBy { get; set; }
         public int PointsRequired { get; set; }
+        [Required(ErrorMessage = "Trường học không được để trống")]
+        public int SchoolId { get; set; }
         public IFormFile File { get; set; }
         public IFormFile? CoverImage { get; set; }
     }
@@ -907,7 +931,6 @@ namespace DocumentSharingAPI.Controllers
         public int PageSize { get; set; } = 10;
     }
 
-    // Thêm model cho khóa/mở khóa tài liệu
     public class LockDocumentModel
     {
         public bool IsLocked { get; set; }
