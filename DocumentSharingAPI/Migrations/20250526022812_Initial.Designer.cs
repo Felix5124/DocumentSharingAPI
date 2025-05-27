@@ -12,8 +12,8 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace DocumentSharingAPI.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20250519033120_UpdateLockForDocument")]
-    partial class UpdateLockForDocument
+    [Migration("20250526022812_Initial")]
+    partial class Initial
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -111,6 +111,9 @@ namespace DocumentSharingAPI.Migrations
                     b.Property<int>("CategoryId")
                         .HasColumnType("int");
 
+                    b.Property<string>("CoverImageUrl")
+                        .HasColumnType("nvarchar(max)");
+
                     b.Property<string>("Description")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
@@ -138,6 +141,9 @@ namespace DocumentSharingAPI.Migrations
                     b.Property<int>("PointsRequired")
                         .HasColumnType("int");
 
+                    b.Property<int>("SchoolId")
+                        .HasColumnType("int");
+
                     b.Property<string>("Title")
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
@@ -151,6 +157,8 @@ namespace DocumentSharingAPI.Migrations
                     b.HasKey("DocumentId");
 
                     b.HasIndex("CategoryId");
+
+                    b.HasIndex("SchoolId");
 
                     b.HasIndex("UploadedBy");
 
@@ -309,6 +317,27 @@ namespace DocumentSharingAPI.Migrations
                     b.ToTable("Recommendations");
                 });
 
+            modelBuilder.Entity("DocumentSharingAPI.Models.School", b =>
+                {
+                    b.Property<int>("SchoolId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("SchoolId"));
+
+                    b.Property<string>("LogoUrl")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.HasKey("SchoolId");
+
+                    b.ToTable("School");
+                });
+
             modelBuilder.Entity("DocumentSharingAPI.Models.User", b =>
                 {
                     b.Property<int>("UserId")
@@ -351,10 +380,12 @@ namespace DocumentSharingAPI.Migrations
                     b.Property<int>("Points")
                         .HasColumnType("int");
 
-                    b.Property<string>("School")
-                        .HasColumnType("nvarchar(max)");
+                    b.Property<int>("SchoolId")
+                        .HasColumnType("int");
 
                     b.HasKey("UserId");
+
+                    b.HasIndex("SchoolId");
 
                     b.ToTable("Users");
                 });
@@ -425,6 +456,12 @@ namespace DocumentSharingAPI.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
+                    b.HasOne("DocumentSharingAPI.Models.School", "School")
+                        .WithMany()
+                        .HasForeignKey("SchoolId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
                     b.HasOne("DocumentSharingAPI.Models.User", "User")
                         .WithMany("UploadedDocuments")
                         .HasForeignKey("UploadedBy")
@@ -432,6 +469,8 @@ namespace DocumentSharingAPI.Migrations
                         .IsRequired();
 
                     b.Navigation("Category");
+
+                    b.Navigation("School");
 
                     b.Navigation("User");
                 });
@@ -525,6 +564,17 @@ namespace DocumentSharingAPI.Migrations
                     b.Navigation("Document");
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("DocumentSharingAPI.Models.User", b =>
+                {
+                    b.HasOne("DocumentSharingAPI.Models.School", "School")
+                        .WithMany()
+                        .HasForeignKey("SchoolId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("School");
                 });
 
             modelBuilder.Entity("DocumentSharingAPI.Models.UserBadge", b =>
