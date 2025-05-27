@@ -11,12 +11,13 @@ namespace DocumentSharingAPI.Controllers
     public class UsersController : ControllerBase
     {
         private readonly IUserRepository _userRepository;
-
-        public UsersController(IUserRepository userRepository)
+        private readonly AppDbContext _context;
+        public UsersController(IUserRepository userRepository, AppDbContext context)
         {
             _userRepository = userRepository;
+            _context = context;
         }
-
+        
         [HttpPost("register")]
         public async Task<IActionResult> Register([FromBody] RegisterModel model)
         {
@@ -37,7 +38,7 @@ namespace DocumentSharingAPI.Controllers
                 Email = model.Email,
                 FullName = model.FullName,
                 FirebaseUid = firebaseUser.Uid,
-                CreatedAt = DateTime.Now
+                CreatedAt = DateTime.Now,
             };
             await _userRepository.AddAsync(user);
 
@@ -56,19 +57,12 @@ namespace DocumentSharingAPI.Controllers
             var existingUserByUid = await _userRepository.GetByFirebaseUidAsync(model.FirebaseUid);
             if (existingUserByUid != null)
             {
-                // Trường hợp hiếm: người dùng đã tồn tại bằng UID nhưng không phải email? Hoặc race condition.
-                // Trả về người dùng hiện tại hoặc lỗi tùy theo logic của bạn.
                 return Ok(existingUserByUid);
             }
 
             var existingUserByEmail = await _userRepository.GetByEmailAsync(model.Email);
             if (existingUserByEmail != null)
             {
-                // Nếu email đã tồn tại nhưng FirebaseUid khác (ví dụ: đã đăng ký bằng email/pass trước đó)
-                // Bạn cần quyết định cách xử lý:
-                // 1. Báo lỗi "Email đã được sử dụng với phương thức đăng nhập khác".
-                // 2. Liên kết tài khoản Google này với tài khoản email/pass hiện có (cần cẩn thận).
-                // Hiện tại, chúng ta sẽ báo lỗi để đơn giản.
                 return Conflict(new { message = "Email này đã được đăng ký trong hệ thống với một tài khoản khác." });
             }
 
@@ -77,24 +71,20 @@ namespace DocumentSharingAPI.Controllers
                 FirebaseUid = model.FirebaseUid,
                 Email = model.Email,
                 FullName = model.FullName,
-                // AvatarUrl = model.AvatarUrl,
-                Points = 0, // Điểm khởi tạo
+                Points = 0,
                 IsAdmin = false,
                 IsLocked = false,
-                CreatedAt = DateTime.UtcNow
-                // Các trường mặc định khác
+                CreatedAt = DateTime.UtcNow,
             };
 
-            await _userRepository.AddAsync(user); // Lưu người dùng vào DB cục bộ
+            await _userRepository.AddAsync(user);
 
-            // Lấy lại người dùng từ DB để đảm bảo có UserId và các thông tin khác được set đúng
             var createdUser = await _userRepository.GetByFirebaseUidAsync(user.FirebaseUid);
             if (createdUser == null)
             {
-                // Lỗi không mong muốn
                 return StatusCode(StatusCodes.Status500InternalServerError, "Không thể tạo người dùng mới trong cơ sở dữ liệu.");
             }
-            return Ok(createdUser); // Trả về thông tin người dùng đã tạo
+            return Ok(createdUser);
         }
 
 
@@ -127,7 +117,21 @@ namespace DocumentSharingAPI.Controllers
         public async Task<IActionResult> GetAll()
         {
             var users = await _userRepository.GetAllAsync();
-            return Ok(users);
+            return Ok(users.Select(u => new
+            {
+                u.UserId,
+                u.Email,
+                u.FullName,
+                u.AvatarUrl,
+                u.SchoolId,
+                SchoolName = u.School?.Name, // Thêm thông tin trường
+                u.Points,
+                u.Level,
+                u.IsAdmin,
+                u.IsLocked,
+                u.CreatedAt,
+                u.CommentCount
+            }));
         }
 
         [HttpGet("by-uid/{uid}")]
@@ -144,7 +148,21 @@ namespace DocumentSharingAPI.Controllers
             var user = await _userRepository.GetByIdAsync(id);
             if (user == null)
                 return NotFound();
-            return Ok(user);
+            return Ok(new
+            {
+                user.UserId,
+                user.Email,
+                user.FullName,
+                user.AvatarUrl,
+                user.SchoolId,
+                SchoolName = user.School?.Name, // Thêm thông tin trường
+                user.Points,
+                user.Level,
+                user.IsAdmin,
+                user.IsLocked,
+                user.CreatedAt,
+                user.CommentCount
+            });
         }
 
         [HttpPut("{id}")]
@@ -154,8 +172,12 @@ namespace DocumentSharingAPI.Controllers
             if (user == null)
                 return NotFound();
 
+            var school = await _context.Schools.FindAsync(model.SchoolId);
+            if (school == null)
+                return BadRequest("Trường học không hợp lệ.");
+
             user.FullName = model.FullName ?? user.FullName;
-            user.School = model.School ?? user.School;
+            user.SchoolId = model.SchoolId; // Cập nhật SchoolId
             user.AvatarUrl = model.AvatarUrl ?? user.AvatarUrl;
 
             await _userRepository.UpdateAsync(user);
@@ -358,7 +380,7 @@ namespace DocumentSharingAPI.Controllers
     public class UpdateUserModel
     {
         public string? FullName { get; set; }
-        public string? School { get; set; }
+        public int SchoolId { get; set; }
         public string? AvatarUrl { get; set; }
     }
 

@@ -40,6 +40,20 @@ namespace DocumentSharingAPI.Migrations
                 });
 
             migrationBuilder.CreateTable(
+                name: "School",
+                columns: table => new
+                {
+                    SchoolId = table.Column<int>(type: "int", nullable: false)
+                        .Annotation("SqlServer:Identity", "1, 1"),
+                    Name = table.Column<string>(type: "nvarchar(max)", nullable: false),
+                    LogoUrl = table.Column<string>(type: "nvarchar(max)", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_School", x => x.SchoolId);
+                });
+
+            migrationBuilder.CreateTable(
                 name: "Users",
                 columns: table => new
                 {
@@ -49,16 +63,23 @@ namespace DocumentSharingAPI.Migrations
                     Email = table.Column<string>(type: "nvarchar(max)", nullable: false),
                     FullName = table.Column<string>(type: "nvarchar(max)", nullable: false),
                     AvatarUrl = table.Column<string>(type: "nvarchar(max)", nullable: true),
-                    School = table.Column<string>(type: "nvarchar(max)", nullable: true),
+                    SchoolId = table.Column<int>(type: "int", nullable: false),
                     Points = table.Column<int>(type: "int", nullable: false),
                     Level = table.Column<string>(type: "nvarchar(max)", nullable: false),
                     IsAdmin = table.Column<bool>(type: "bit", nullable: false),
                     IsLocked = table.Column<bool>(type: "bit", nullable: false),
-                    CreatedAt = table.Column<DateTime>(type: "datetime2", nullable: false)
+                    CreatedAt = table.Column<DateTime>(type: "datetime2", nullable: false),
+                    CommentCount = table.Column<int>(type: "int", nullable: false)
                 },
                 constraints: table =>
                 {
                     table.PrimaryKey("PK_Users", x => x.UserId);
+                    table.ForeignKey(
+                        name: "FK_Users_School_SchoolId",
+                        column: x => x.SchoolId,
+                        principalTable: "School",
+                        principalColumn: "SchoolId",
+                        onDelete: ReferentialAction.Cascade);
                 });
 
             migrationBuilder.CreateTable(
@@ -77,7 +98,10 @@ namespace DocumentSharingAPI.Migrations
                     UploadedAt = table.Column<DateTime>(type: "datetime2", nullable: false),
                     DownloadCount = table.Column<int>(type: "int", nullable: false),
                     PointsRequired = table.Column<int>(type: "int", nullable: false),
-                    IsApproved = table.Column<bool>(type: "bit", nullable: false)
+                    IsApproved = table.Column<bool>(type: "bit", nullable: false),
+                    IsLock = table.Column<bool>(type: "bit", nullable: false),
+                    CoverImageUrl = table.Column<string>(type: "nvarchar(max)", nullable: true),
+                    SchoolId = table.Column<int>(type: "int", nullable: false)
                 },
                 constraints: table =>
                 {
@@ -89,11 +113,17 @@ namespace DocumentSharingAPI.Migrations
                         principalColumn: "CategoryId",
                         onDelete: ReferentialAction.Cascade);
                     table.ForeignKey(
+                        name: "FK_Documents_School_SchoolId",
+                        column: x => x.SchoolId,
+                        principalTable: "School",
+                        principalColumn: "SchoolId",
+                        onDelete: ReferentialAction.Cascade);
+                    table.ForeignKey(
                         name: "FK_Documents_Users_UploadedBy",
                         column: x => x.UploadedBy,
                         principalTable: "Users",
                         principalColumn: "UserId",
-                        onDelete: ReferentialAction.Cascade);
+                        onDelete: ReferentialAction.NoAction);
                 });
 
             migrationBuilder.CreateTable(
@@ -331,6 +361,11 @@ namespace DocumentSharingAPI.Migrations
                 column: "CategoryId");
 
             migrationBuilder.CreateIndex(
+                name: "IX_Documents_SchoolId",
+                table: "Documents",
+                column: "SchoolId");
+
+            migrationBuilder.CreateIndex(
                 name: "IX_Documents_UploadedBy",
                 table: "Documents",
                 column: "UploadedBy");
@@ -394,6 +429,11 @@ namespace DocumentSharingAPI.Migrations
                 name: "IX_UserDocuments_DocumentId",
                 table: "UserDocuments",
                 column: "DocumentId");
+
+            migrationBuilder.CreateIndex(
+                name: "IX_Users_SchoolId",
+                table: "Users",
+                column: "SchoolId");
         }
 
         /// <inheritdoc />
@@ -434,6 +474,9 @@ namespace DocumentSharingAPI.Migrations
 
             migrationBuilder.DropTable(
                 name: "Users");
+
+            migrationBuilder.DropTable(
+                name: "School");
         }
     }
 }
