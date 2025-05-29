@@ -27,5 +27,8 @@ namespace DocumentSharingAPI.Models
         public School School { get; set; }
         public ICollection<Comment> Comments { get; set; }
         public ICollection<UserDocument> UserDocuments { get; set; }
+
+        public virtual ICollection<DocumentTag> DocumentTags { get; set; } = new HashSet<DocumentTag>();
+
     }
 }

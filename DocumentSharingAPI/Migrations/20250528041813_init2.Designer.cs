@@ -4,6 +4,7 @@ using DocumentSharingAPI.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace DocumentSharingAPI.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20250528041813_init2")]
+    partial class init2
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -160,21 +163,6 @@ namespace DocumentSharingAPI.Migrations
                     b.HasIndex("UploadedBy");
 
                     b.ToTable("Documents");
-                });
-
-            modelBuilder.Entity("DocumentSharingAPI.Models.DocumentTag", b =>
-                {
-                    b.Property<int>("DocumentId")
-                        .HasColumnType("int");
-
-                    b.Property<int>("TagId")
-                        .HasColumnType("int");
-
-                    b.HasKey("DocumentId", "TagId");
-
-                    b.HasIndex("TagId");
-
-                    b.ToTable("DocumentTags");
                 });
 
             modelBuilder.Entity("DocumentSharingAPI.Models.Follow", b =>
@@ -354,33 +342,6 @@ namespace DocumentSharingAPI.Migrations
                     b.ToTable("Schools");
                 });
 
-            modelBuilder.Entity("DocumentSharingAPI.Models.Tag", b =>
-                {
-                    b.Property<int>("TagId")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("TagId"));
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
-
-                    b.Property<DateTime?>("UpdatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.HasKey("TagId");
-
-                    b.HasIndex("Name")
-                        .IsUnique();
-
-                    b.ToTable("Tags");
-                });
-
             modelBuilder.Entity("DocumentSharingAPI.Models.User", b =>
                 {
                     b.Property<int>("UserId")
@@ -516,25 +477,6 @@ namespace DocumentSharingAPI.Migrations
                     b.Navigation("School");
 
                     b.Navigation("User");
-                });
-
-            modelBuilder.Entity("DocumentSharingAPI.Models.DocumentTag", b =>
-                {
-                    b.HasOne("DocumentSharingAPI.Models.Document", "Document")
-                        .WithMany("DocumentTags")
-                        .HasForeignKey("DocumentId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.HasOne("DocumentSharingAPI.Models.Tag", "Tag")
-                        .WithMany("DocumentTags")
-                        .HasForeignKey("TagId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Document");
-
-                    b.Navigation("Tag");
                 });
 
             modelBuilder.Entity("DocumentSharingAPI.Models.Follow", b =>
@@ -690,19 +632,12 @@ namespace DocumentSharingAPI.Migrations
                 {
                     b.Navigation("Comments");
 
-                    b.Navigation("DocumentTags");
-
                     b.Navigation("UserDocuments");
                 });
 
             modelBuilder.Entity("DocumentSharingAPI.Models.Post", b =>
                 {
                     b.Navigation("Comments");
-                });
-
-            modelBuilder.Entity("DocumentSharingAPI.Models.Tag", b =>
-                {
-                    b.Navigation("DocumentTags");
                 });
 
             modelBuilder.Entity("DocumentSharingAPI.Models.User", b =>
