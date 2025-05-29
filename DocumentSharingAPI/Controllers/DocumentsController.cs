@@ -9,6 +9,7 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
+using DocumentSharingAPI.Models.DTO;
 
 namespace DocumentSharingAPI.Controllers
 {
@@ -21,6 +22,7 @@ namespace DocumentSharingAPI.Controllers
         private readonly IUserRepository _userRepository;
         private readonly IUserDocumentRepository _userDocumentRepository;
         private readonly INotificationRepository _notificationRepository;
+        private readonly ITagRepository _tagRepository;
         private readonly AppDbContext _context;
 
         public DocumentsController(
@@ -29,6 +31,7 @@ namespace DocumentSharingAPI.Controllers
             IUserRepository userRepository,
             IUserDocumentRepository userDocumentRepository,
             INotificationRepository notificationRepository,
+            ITagRepository tagRepository,
             AppDbContext context)
         {
             _documentRepository = documentRepository;
@@ -36,6 +39,7 @@ namespace DocumentSharingAPI.Controllers
             _userRepository = userRepository;
             _userDocumentRepository = userDocumentRepository;
             _notificationRepository = notificationRepository;
+            _tagRepository = tagRepository;
             _context = context;
         }
 
@@ -52,6 +56,7 @@ namespace DocumentSharingAPI.Controllers
                 {
                     d.DocumentId,
                     d.Title,
+                    Tags = d.DocumentTags.Select(dt => new TagDto { TagId = dt.Tag.TagId, Name = dt.Tag.Name }).ToList(),
                     d.Description,
                     d.CoverImageUrl,
                     d.UploadedAt,
@@ -85,6 +90,8 @@ namespace DocumentSharingAPI.Controllers
             {
                 document.DocumentId,
                 document.Title,
+                Tags = document.DocumentTags.Select(dt => new TagDto { TagId = dt.Tag.TagId, Name = dt.Tag.Name }).ToList(),
+
                 document.Description,
                 document.FileUrl,
                 document.CoverImageUrl,
@@ -143,7 +150,7 @@ namespace DocumentSharingAPI.Controllers
         }
 
         [HttpPut("{id}")]
-        public async Task<IActionResult> Update(int id, [FromForm] UploadDocumentModel model)
+        public async Task<IActionResult> Update(int id, [FromForm] UpdateDocumentDto model)
         {
             Console.WriteLine("Received update model: " + JsonSerializer.Serialize(model));
 
@@ -234,6 +241,43 @@ namespace DocumentSharingAPI.Controllers
                 document.FileType = extension.TrimStart('.');
                 document.FileSize = model.File.Length;
                 Console.WriteLine($"Updated file for document {id}: {fileName}");
+            }
+
+            if (model.Tags != null) // Nếu model.Tags là null, nghĩa là client không muốn thay đổi tags
+            {
+                // Lấy các tag IDs hiện tại của document
+                var currentTagIds = document.DocumentTags.Select(dt => dt.TagId).ToList();
+                var newTagObjects = new List<Tag>();
+
+                // Tạo hoặc lấy các tag objects từ tên tag mới
+                foreach (var tagName in model.Tags.Where(tn => !string.IsNullOrWhiteSpace(tn)).Distinct())
+                {
+                    var tag = await _tagRepository.GetOrCreateTagAsync(tagName);
+                    if (tag != null)
+                    {
+                        newTagObjects.Add(tag);
+                    }
+                }
+                var newTagIds = newTagObjects.Select(t => t.TagId).ToList();
+
+                // Xóa các DocumentTag không còn trong danh sách mới
+                var tagsToRemove = document.DocumentTags
+                                        .Where(dt => !newTagIds.Contains(dt.TagId))
+                                        .ToList();
+                if (tagsToRemove.Any())
+                {
+                    _context.DocumentTags.RemoveRange(tagsToRemove);
+                }
+
+                // Thêm các DocumentTag mới
+                foreach (var tagObj in newTagObjects)
+                {
+                    if (!currentTagIds.Contains(tagObj.TagId)) // Chỉ thêm nếu chưa có
+                    {
+                        _context.DocumentTags.Add(new DocumentTag { DocumentId = document.DocumentId, TagId = tagObj.TagId });
+                    }
+                }
+                
             }
 
             await _documentRepository.UpdateAsync(document);
@@ -387,6 +431,24 @@ namespace DocumentSharingAPI.Controllers
             await _documentRepository.AddAsync(document);
             Console.WriteLine($"Document created with ID: {document.DocumentId}");
 
+            if (model.Tags != null && model.Tags.Any())
+            {
+                document.DocumentTags = new HashSet<DocumentTag>(); // Khởi tạo nếu chưa
+                foreach (var tagName in model.Tags.Where(tn => !string.IsNullOrWhiteSpace(tn)).Distinct())
+                {
+                    var tag = await _tagRepository.GetOrCreateTagAsync(tagName);
+                    if (tag != null)
+                    {
+                        // Chỉ thêm nếu liên kết chưa tồn tại (tránh lỗi duplicate key nếu có thể)
+                        if (!document.DocumentTags.Any(dt => dt.TagId == tag.TagId))
+                        {
+                            _context.DocumentTags.Add(new DocumentTag { DocumentId = document.DocumentId, TagId = tag.TagId });
+                        }
+                    }
+                }
+                await _context.SaveChangesAsync(); // Lưu các DocumentTag mới
+            }
+
             var userDocument = new UserDocument
             {
                 UserId = model.UploadedBy,
@@ -472,7 +534,8 @@ namespace DocumentSharingAPI.Controllers
                     string.IsNullOrEmpty(model.Keyword) ? null : model.Keyword,
                     model.CategoryId == 0 ? null : model.CategoryId,
                     string.IsNullOrEmpty(model.FileType) ? null : model.FileType,
-                    sortBy
+                    sortBy,
+                    model.Tags
                 );
 
                 var result = new List<object>();
@@ -484,6 +547,7 @@ namespace DocumentSharingAPI.Controllers
                     {
                         d.DocumentId,
                         d.Title,
+                        Tags = d.DocumentTags.Select(dt => new TagDto { TagId = dt.Tag.TagId, Name = dt.Tag.Name }).ToList(),
                         d.Description,
                         d.FileUrl,
                         d.CoverImageUrl,
@@ -890,6 +954,27 @@ namespace DocumentSharingAPI.Controllers
 
             return $"ImageCovers/{fileName}";
         }
+
+        [HttpGet("related-by-tags")]
+        public async Task<IActionResult> GetRelatedDocumentsByTags([FromQuery] List<string> tagNames, [FromQuery] int excludeDocumentId, [FromQuery] int limit = 5)
+        {
+            if (tagNames == null || !tagNames.Any())
+            {
+                return Ok(new List<object>()); 
+            }
+
+            var documents = await _documentRepository.GetRelatedDocumentsByTagsAsync(tagNames, excludeDocumentId, limit);
+
+            var result = documents.Select(d => new
+            {
+                d.DocumentId,
+                d.Title,
+                d.CoverImageUrl,
+                UploaderFullName = d.User?.FullName, 
+            }).ToList();
+
+            return Ok(result);
+        }
     }
 
     public class DocumentModel
@@ -919,6 +1004,7 @@ namespace DocumentSharingAPI.Controllers
         public int SchoolId { get; set; }
         public IFormFile File { get; set; }
         public IFormFile? CoverImage { get; set; }
+        public List<string>? Tags { get; set; }
     }
 
     public class SearchDocumentModel
@@ -929,10 +1015,19 @@ namespace DocumentSharingAPI.Controllers
         public string SortBy { get; set; } = "UploadedAt";
         public int Page { get; set; } = 1;
         public int PageSize { get; set; } = 10;
+        public List<string>? Tags { get; set; }
     }
 
     public class LockDocumentModel
     {
         public bool IsLocked { get; set; }
     }
+
+    public class TagDto
+    {
+        public int TagId { get; set; }
+        public string Name { get; set; }
+    }
+
+
 }

@@ -173,6 +173,8 @@ builder.Services.AddScoped<IRecommendationRepository, RecommendationRepository>(
 builder.Services.AddScoped<IBadgeRepository, BadgeRepository>();
 builder.Services.AddScoped<IUserBadgeRepository, UserBadgeRepository>();
 builder.Services.AddScoped<IUserDocumentRepository, UserDocumentRepository>();
+builder.Services.AddScoped<ITagRepository, TagRepository>();
+
 
 // Swagger Configuration
 builder.Services.AddEndpointsApiExplorer();
