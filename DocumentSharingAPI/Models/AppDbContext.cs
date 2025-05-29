@@ -20,6 +20,9 @@ namespace DocumentSharingAPI.Models
         public DbSet<PostComment> PostComments { get; set; }
         public DbSet<Recommendation> Recommendations { get; set; }
         public DbSet<School> Schools { get; set; }
+        public DbSet<Tag> Tags { get; set; }
+        public DbSet<DocumentTag> DocumentTags { get; set; }
+
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -115,6 +118,29 @@ namespace DocumentSharingAPI.Models
                 .WithMany()
                 .HasForeignKey(d => d.SchoolId)
                 .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<Tag>(entity =>
+            {
+                entity.HasKey(t => t.TagId);
+                entity.Property(t => t.Name).IsRequired().HasMaxLength(100);
+                entity.HasIndex(t => t.Name).IsUnique(); 
+            });
+
+            modelBuilder.Entity<DocumentTag>(entity =>
+            {
+                entity.HasKey(dt => new { dt.DocumentId, dt.TagId }); 
+
+                entity.HasOne(dt => dt.Document)
+                    .WithMany(d => d.DocumentTags)
+                    .HasForeignKey(dt => dt.DocumentId)
+                    .OnDelete(DeleteBehavior.Cascade); 
+
+                entity.HasOne(dt => dt.Tag)
+                    .WithMany(t => t.DocumentTags)
+                    .HasForeignKey(dt => dt.TagId)
+                    .OnDelete(DeleteBehavior.Cascade); 
+                                                       
+            });
         }
     }
 }

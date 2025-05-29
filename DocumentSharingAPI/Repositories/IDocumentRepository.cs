@@ -9,9 +9,10 @@ namespace DocumentSharingAPI.Repositories
         Task<IEnumerable<Document>> GetPendingDocumentsAsync();
         Task ApproveDocumentAsync(int id);
         Task IncrementDownloadCountAsync(int id);
-        Task<(IEnumerable<Document>, int)> GetPagedAsync(int page, int pageSize, string keyword, int? categoryId, string fileType, string sortBy);
+        Task<(IEnumerable<Document>, int)> GetPagedAsync(int page, int pageSize, string keyword, int? categoryId, string fileType, string sortBy, List<string> tagNames = null);
         new Task DeleteAsync(int id); // Thêm từ khóa new
         Task<Document> GetTopDownloadedDocumentAsync();
         Task UpdateLockStatusAsync(int documentId, bool isLocked);
+        Task<IEnumerable<Document>> GetRelatedDocumentsByTagsAsync(List<string> tagNames, int excludeDocumentId,int limit);
     }
 }

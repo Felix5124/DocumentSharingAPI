@@ -115,6 +115,8 @@ namespace DocumentSharingAPI.Repositories
         {
             return await _context.Documents
                 .Include(d => d.Category)
+                .Include(d => d.DocumentTags)
+                .ThenInclude(dt => dt.Tag)
                 .FirstOrDefaultAsync(d => d.DocumentId == id);
 
         }
@@ -135,9 +137,12 @@ namespace DocumentSharingAPI.Repositories
             Console.WriteLine($"DownloadCount updated for document ID {id} to {document.DownloadCount}");
         }
 
-        public async Task<(IEnumerable<Document>, int)> GetPagedAsync(int page, int pageSize, string keyword, int? categoryId, string fileType, string sortBy)
+        public async Task<(IEnumerable<Document>, int)> GetPagedAsync(int page, int pageSize, string keyword, int? categoryId, string fileType, string sortBy, List<string> tagNames = null)
         {
-            var query = _context.Documents.AsQueryable();
+            var query = _context.Documents
+                .Include(d => d.DocumentTags) 
+                    .ThenInclude(dt => dt.Tag)
+                .AsQueryable();
 
             query = query.Where(d => d.IsApproved == true);
 
@@ -149,6 +154,20 @@ namespace DocumentSharingAPI.Repositories
 
             if (!string.IsNullOrEmpty(fileType))
                 query = query.Where(d => d.FileType == fileType);
+
+            if (tagNames != null && tagNames.Any())
+            {
+                var normalizedTagNames = tagNames
+                    .Select(tn => tn.Trim().ToLower())
+                    .Where(tn => !string.IsNullOrWhiteSpace(tn))
+                    .Distinct()
+                    .ToList();
+
+                if (normalizedTagNames.Any())
+                {
+                    query = query.Where(d => d.DocumentTags.Any(dt => normalizedTagNames.Contains(dt.Tag.Name.ToLower())));
+                }
+            }
 
             switch (sortBy?.ToLower())
             {
@@ -221,6 +240,51 @@ namespace DocumentSharingAPI.Repositories
                     DownloadCount = d.DownloadCount
                 })
                 .FirstOrDefaultAsync();
+        }
+
+        public async Task<IEnumerable<Document>> GetRelatedDocumentsByTagsAsync(
+           List<string> tagNames,
+           int excludeDocumentId,
+           int limit)
+        {
+            if (tagNames == null || !tagNames.Any())
+            {
+                return new List<Document>();
+            }
+
+            var normalizedTagNames = tagNames
+                .Select(tn => tn.Trim().ToLower())
+                .Where(tn => !string.IsNullOrWhiteSpace(tn))
+                .ToList();
+
+            if (!normalizedTagNames.Any())
+            {
+                return new List<Document>();
+            }
+
+            var query = _context.Documents
+                .Include(d => d.User) 
+                .Include(d => d.DocumentTags)
+                    .ThenInclude(dt => dt.Tag)
+                .Where(d => d.DocumentId != excludeDocumentId && d.IsApproved && !d.IsLock)
+                .Where(d => d.DocumentTags.Any(dt => normalizedTagNames.Contains(dt.Tag.Name.ToLower())));
+
+            var documentsWithMatchCount = await query
+                .Select(d => new
+                {
+                    Document = d,
+                    MatchCount = d.DocumentTags.Count(dt => normalizedTagNames.Contains(dt.Tag.Name.ToLower()))
+                })
+                .ToListAsync(); 
+
+            var relatedDocuments = documentsWithMatchCount
+                .OrderByDescending(x => x.MatchCount)
+                .ThenByDescending(x => x.Document.DownloadCount) 
+                .Select(x => x.Document)
+                .Take(limit)
+                .ToList(); 
+
+            return relatedDocuments;
         }
     }
 }
