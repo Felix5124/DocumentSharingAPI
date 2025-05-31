@@ -17,7 +17,7 @@ namespace DocumentSharingAPI.Controllers
             _userRepository = userRepository;
             _context = context;
         }
-        
+
         [HttpPost("register")]
         public async Task<IActionResult> Register([FromBody] RegisterModel model)
         {
@@ -38,7 +38,8 @@ namespace DocumentSharingAPI.Controllers
                 Email = model.Email,
                 FullName = model.FullName,
                 FirebaseUid = firebaseUser.Uid,
-                CreatedAt = DateTime.Now,
+                AvatarUrl = "/avatars/defaultavatar.png", // Đặt ảnh mặc định
+                CreatedAt = DateTime.Now
             };
             await _userRepository.AddAsync(user);
 
@@ -74,7 +75,8 @@ namespace DocumentSharingAPI.Controllers
                 Points = 0,
                 IsAdmin = false,
                 IsLocked = false,
-                CreatedAt = DateTime.UtcNow,
+                AvatarUrl = "/avatars/defaultavatar.png", // Đặt ảnh mặc định
+                CreatedAt = DateTime.UtcNow
             };
 
             await _userRepository.AddAsync(user);
@@ -333,16 +335,24 @@ namespace DocumentSharingAPI.Controllers
         {
             try
             {
-                var topCommenter = await _userRepository.GetTopCommenterAsync();
+                var topCommenter = await _userRepository.GetTopCommenterAsync(); 
                 if (topCommenter == null)
                     return NotFound("Không có người dùng nào có bình luận.");
 
-                return Ok(topCommenter);
+                return Ok(new
+                {
+                    topCommenter.UserId,
+                    topCommenter.FullName,
+                    topCommenter.Email,
+                    topCommenter.AvatarUrl, // Đảm bảo trả về AvatarUrl
+                    topCommenter.CommentCount
+                });
             }
             catch (Exception ex)
             {
                 return StatusCode(500, $"Internal server error: {ex.Message}");
             }
+
         }
 
         // Thêm endpoint mới: Người có nhiều điểm nhất
@@ -355,7 +365,14 @@ namespace DocumentSharingAPI.Controllers
                 if (topUser == null)
                     return NotFound("Không có người dùng nào có điểm.");
 
-                return Ok(topUser);
+                return Ok(new
+                {
+                    topUser.UserId,
+                    topUser.FullName,
+                    topUser.Email,
+                    topUser.AvatarUrl, // Đảm bảo trả về AvatarUrl
+                    topUser.Points
+                });
             }
             catch (Exception ex)
             {
