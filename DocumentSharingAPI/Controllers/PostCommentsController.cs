@@ -36,7 +36,11 @@ namespace DocumentSharingAPI.Controllers
                 c.Content,
                 c.CreatedAt,
                 c.UserId,
-                UserEmail = c.User?.Email ?? "Ẩn danh"
+                User = c.User != null ? new
+                {
+                    c.User.Email,
+                    c.User.AvatarUrl // Thêm avatarUrl vào dữ liệu trả về
+                } : null
             }).ToList();
             return Ok(commentDtos);
         }
@@ -72,7 +76,11 @@ namespace DocumentSharingAPI.Controllers
                 comment.Content,
                 comment.CreatedAt,
                 comment.UserId,
-                UserEmail = user?.Email ?? "Ẩn danh"
+                User = user != null ? new
+                {
+                    user.Email,
+                    user.AvatarUrl // Thêm avatarUrl vào dữ liệu trả về
+                } : null
             });
         }
 
