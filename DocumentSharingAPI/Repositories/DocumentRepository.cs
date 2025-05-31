@@ -137,24 +137,44 @@ namespace DocumentSharingAPI.Repositories
             Console.WriteLine($"DownloadCount updated for document ID {id} to {document.DownloadCount}");
         }
 
-        public async Task<(IEnumerable<Document>, int)> GetPagedAsync(int page, int pageSize, string keyword, int? categoryId, string fileType, string sortBy, List<string> tagNames = null)
+        public async Task<(IEnumerable<Document>, int)> GetPagedAsync(int page, int pageSize, string keyword, int? categoryId, string fileType, string sortBy, List<string> tagNames = null, int? schoolId = null)
         {
+            // Kiểm tra SchoolId hợp lệ sớm
+            if (schoolId.HasValue && schoolId.Value > 0)
+            {
+                var schoolExists = await _context.Schools.AnyAsync(s => s.SchoolId == schoolId.Value);
+                if (!schoolExists)
+                {
+                    Console.WriteLine($"SchoolId {schoolId.Value} does not exist.");
+                    return (new List<Document>(), 0);
+                }
+            }
+
             var query = _context.Documents
-                .Include(d => d.DocumentTags) 
+                .Include(d => d.DocumentTags)
                     .ThenInclude(dt => dt.Tag)
                 .AsQueryable();
 
+            // Lọc tài liệu đã duyệt
             query = query.Where(d => d.IsApproved == true);
 
+            // Lọc theo từ khóa
             if (!string.IsNullOrEmpty(keyword))
                 query = query.Where(d => d.Title.Contains(keyword) || d.Description.Contains(keyword));
 
+            // Lọc theo danh mục
             if (categoryId.HasValue && categoryId.Value > 0)
                 query = query.Where(d => d.CategoryId == categoryId.Value);
 
+            // Lọc theo loại file
             if (!string.IsNullOrEmpty(fileType))
                 query = query.Where(d => d.FileType == fileType);
 
+            // Lọc theo trường học
+            if (schoolId.HasValue && schoolId.Value > 0)
+                query = query.Where(d => d.SchoolId == schoolId.Value);
+
+            // Lọc theo tags
             if (tagNames != null && tagNames.Any())
             {
                 var normalizedTagNames = tagNames
@@ -169,6 +189,17 @@ namespace DocumentSharingAPI.Repositories
                 }
             }
 
+            // Đếm tổng số bản ghi
+            var total = await query.CountAsync();
+
+            // Nếu không có bản ghi, trả về ngay
+            if (total == 0)
+            {
+                Console.WriteLine("No documents found matching the criteria.");
+                return (new List<Document>(), 0);
+            }
+
+            // Sắp xếp
             switch (sortBy?.ToLower())
             {
                 case "newest":
@@ -182,8 +213,7 @@ namespace DocumentSharingAPI.Repositories
                     break;
             }
 
-            var total = await query.CountAsync();
-
+            // Phân trang
             var documents = await query
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
