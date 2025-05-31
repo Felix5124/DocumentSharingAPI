@@ -79,11 +79,13 @@ namespace DocumentSharingAPI.Repositories
                       user => user.UserId,
                       comment => comment.UserId,
                       (user, comment) => new { user, comment })
-                .GroupBy(x => new { x.user.UserId, x.user.Email })
+                .GroupBy(x => new { x.user.UserId, x.user.Email, x.user.FullName, x.user.AvatarUrl }) // Thêm FullName, AvatarUrl
                 .Select(g => new
                 {
                     UserId = g.Key.UserId,
                     Email = g.Key.Email,
+                    FullName = g.Key.FullName,
+                    AvatarUrl = g.Key.AvatarUrl,
                     CommentCount = g.Count()
                 })
                 .OrderByDescending(x => x.CommentCount)
@@ -96,6 +98,8 @@ namespace DocumentSharingAPI.Repositories
             {
                 UserId = topCommenter.UserId,
                 Email = topCommenter.Email,
+                FullName = topCommenter.FullName,
+                AvatarUrl = topCommenter.AvatarUrl,
                 CommentCount = topCommenter.CommentCount
             };
         }
@@ -109,6 +113,8 @@ namespace DocumentSharingAPI.Repositories
                 {
                     UserId = u.UserId,
                     Email = u.Email,
+                    FullName = u.FullName, // Thêm FullName
+                    AvatarUrl = u.AvatarUrl, // Thêm AvatarUrl
                     Points = u.Points
                 })
                 .FirstOrDefaultAsync();

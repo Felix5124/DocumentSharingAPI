@@ -524,7 +524,7 @@ namespace DocumentSharingAPI.Controllers
         {
             try
             {
-                Console.WriteLine($"Received params: Keyword={model.Keyword}, CategoryId={model.CategoryId}, FileType={model.FileType}, SortBy={model.SortBy}, Page={model.Page}, PageSize={model.PageSize}");
+                Console.WriteLine($"Received params: Keyword={model.Keyword}, CategoryId={model.CategoryId}, FileType={model.FileType}, SchoolId={model.SchoolId}, SortBy={model.SortBy}, Page={model.Page}, PageSize={model.PageSize}, Tags={string.Join(",", model.Tags ?? new List<string>())}");
 
                 var sortBy = model.SortBy == "UploadAt" ? "UploadedAt" : model.SortBy;
 
@@ -535,7 +535,8 @@ namespace DocumentSharingAPI.Controllers
                     model.CategoryId == 0 ? null : model.CategoryId,
                     string.IsNullOrEmpty(model.FileType) ? null : model.FileType,
                     sortBy,
-                    model.Tags
+                    model.Tags,
+                    model.SchoolId == 0 ? null : model.SchoolId // Truyền SchoolId vào repository
                 );
 
                 var result = new List<object>();
@@ -1016,6 +1017,7 @@ namespace DocumentSharingAPI.Controllers
         public int Page { get; set; } = 1;
         public int PageSize { get; set; } = 10;
         public List<string>? Tags { get; set; }
+        public int SchoolId { get; set; } = 0; 
     }
 
     public class LockDocumentModel

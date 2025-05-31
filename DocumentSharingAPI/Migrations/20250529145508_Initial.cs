@@ -40,17 +40,33 @@ namespace DocumentSharingAPI.Migrations
                 });
 
             migrationBuilder.CreateTable(
-                name: "School",
+                name: "Schools",
                 columns: table => new
                 {
                     SchoolId = table.Column<int>(type: "int", nullable: false)
                         .Annotation("SqlServer:Identity", "1, 1"),
                     Name = table.Column<string>(type: "nvarchar(max)", nullable: false),
-                    LogoUrl = table.Column<string>(type: "nvarchar(max)", nullable: false)
+                    LogoUrl = table.Column<string>(type: "nvarchar(max)", nullable: false),
+                    ExternalUrl = table.Column<string>(type: "nvarchar(max)", nullable: false)
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_School", x => x.SchoolId);
+                    table.PrimaryKey("PK_Schools", x => x.SchoolId);
+                });
+
+            migrationBuilder.CreateTable(
+                name: "Tags",
+                columns: table => new
+                {
+                    TagId = table.Column<int>(type: "int", nullable: false)
+                        .Annotation("SqlServer:Identity", "1, 1"),
+                    Name = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false),
+                    CreatedAt = table.Column<DateTime>(type: "datetime2", nullable: false),
+                    UpdatedAt = table.Column<DateTime>(type: "datetime2", nullable: true)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_Tags", x => x.TagId);
                 });
 
             migrationBuilder.CreateTable(
@@ -63,7 +79,7 @@ namespace DocumentSharingAPI.Migrations
                     Email = table.Column<string>(type: "nvarchar(max)", nullable: false),
                     FullName = table.Column<string>(type: "nvarchar(max)", nullable: false),
                     AvatarUrl = table.Column<string>(type: "nvarchar(max)", nullable: true),
-                    SchoolId = table.Column<int>(type: "int", nullable: false),
+                    SchoolId = table.Column<int>(type: "int", nullable: true),
                     Points = table.Column<int>(type: "int", nullable: false),
                     Level = table.Column<string>(type: "nvarchar(max)", nullable: false),
                     IsAdmin = table.Column<bool>(type: "bit", nullable: false),
@@ -75,11 +91,11 @@ namespace DocumentSharingAPI.Migrations
                 {
                     table.PrimaryKey("PK_Users", x => x.UserId);
                     table.ForeignKey(
-                        name: "FK_Users_School_SchoolId",
+                        name: "FK_Users_Schools_SchoolId",
                         column: x => x.SchoolId,
-                        principalTable: "School",
+                        principalTable: "Schools",
                         principalColumn: "SchoolId",
-                        onDelete: ReferentialAction.Cascade);
+                        onDelete: ReferentialAction.Restrict);
                 });
 
             migrationBuilder.CreateTable(
@@ -113,17 +129,17 @@ namespace DocumentSharingAPI.Migrations
                         principalColumn: "CategoryId",
                         onDelete: ReferentialAction.Cascade);
                     table.ForeignKey(
-                        name: "FK_Documents_School_SchoolId",
+                        name: "FK_Documents_Schools_SchoolId",
                         column: x => x.SchoolId,
-                        principalTable: "School",
+                        principalTable: "Schools",
                         principalColumn: "SchoolId",
-                        onDelete: ReferentialAction.Cascade);
+                        onDelete: ReferentialAction.Restrict);
                     table.ForeignKey(
                         name: "FK_Documents_Users_UploadedBy",
                         column: x => x.UploadedBy,
                         principalTable: "Users",
                         principalColumn: "UserId",
-                        onDelete: ReferentialAction.NoAction);
+                        onDelete: ReferentialAction.Cascade);
                 });
 
             migrationBuilder.CreateTable(
@@ -234,6 +250,30 @@ namespace DocumentSharingAPI.Migrations
                         principalTable: "Users",
                         principalColumn: "UserId",
                         onDelete: ReferentialAction.Restrict);
+                });
+
+            migrationBuilder.CreateTable(
+                name: "DocumentTags",
+                columns: table => new
+                {
+                    DocumentId = table.Column<int>(type: "int", nullable: false),
+                    TagId = table.Column<int>(type: "int", nullable: false)
+                },
+                constraints: table =>
+                {
+                    table.PrimaryKey("PK_DocumentTags", x => new { x.DocumentId, x.TagId });
+                    table.ForeignKey(
+                        name: "FK_DocumentTags_Documents_DocumentId",
+                        column: x => x.DocumentId,
+                        principalTable: "Documents",
+                        principalColumn: "DocumentId",
+                        onDelete: ReferentialAction.Cascade);
+                    table.ForeignKey(
+                        name: "FK_DocumentTags_Tags_TagId",
+                        column: x => x.TagId,
+                        principalTable: "Tags",
+                        principalColumn: "TagId",
+                        onDelete: ReferentialAction.Cascade);
                 });
 
             migrationBuilder.CreateTable(
@@ -371,6 +411,11 @@ namespace DocumentSharingAPI.Migrations
                 column: "UploadedBy");
 
             migrationBuilder.CreateIndex(
+                name: "IX_DocumentTags_TagId",
+                table: "DocumentTags",
+                column: "TagId");
+
+            migrationBuilder.CreateIndex(
                 name: "IX_Follows_CategoryId",
                 table: "Follows",
                 column: "CategoryId");
@@ -421,6 +466,12 @@ namespace DocumentSharingAPI.Migrations
                 column: "UserId");
 
             migrationBuilder.CreateIndex(
+                name: "IX_Tags_Name",
+                table: "Tags",
+                column: "Name",
+                unique: true);
+
+            migrationBuilder.CreateIndex(
                 name: "IX_UserBadges_BadgeId",
                 table: "UserBadges",
                 column: "BadgeId");
@@ -443,6 +494,9 @@ namespace DocumentSharingAPI.Migrations
                 name: "Comments");
 
             migrationBuilder.DropTable(
+                name: "DocumentTags");
+
+            migrationBuilder.DropTable(
                 name: "Follows");
 
             migrationBuilder.DropTable(
@@ -461,6 +515,9 @@ namespace DocumentSharingAPI.Migrations
                 name: "UserDocuments");
 
             migrationBuilder.DropTable(
+                name: "Tags");
+
+            migrationBuilder.DropTable(
                 name: "Posts");
 
             migrationBuilder.DropTable(
@@ -476,7 +533,7 @@ namespace DocumentSharingAPI.Migrations
                 name: "Users");
 
             migrationBuilder.DropTable(
-                name: "School");
+                name: "Schools");
         }
     }
 }
