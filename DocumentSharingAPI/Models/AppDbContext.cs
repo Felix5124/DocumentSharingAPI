@@ -23,7 +23,6 @@ namespace DocumentSharingAPI.Models
         public DbSet<Tag> Tags { get; set; }
         public DbSet<DocumentTag> DocumentTags { get; set; }
 
-
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             // Cấu hình khóa chính ghép cho UserDocument

@@ -113,8 +113,8 @@ namespace DocumentSharingAPI.Repositories
                 {
                     UserId = u.UserId,
                     Email = u.Email,
-                    FullName = u.FullName, // Thêm FullName
-                    AvatarUrl = u.AvatarUrl, // Thêm AvatarUrl
+                    FullName = u.FullName, 
+                    AvatarUrl = u.AvatarUrl,
                     Points = u.Points
                 })
                 .FirstOrDefaultAsync();

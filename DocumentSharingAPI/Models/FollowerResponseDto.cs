@@ -7,6 +7,7 @@
         public int FollowedUserId { get; set; }
         public string FollowedUserFullName { get; set; }
         public string FollowedUserEmail { get; set; }
+        public string FollowedUserAvatarUrl { get; set; }
         public DateTime FollowedAt { get; set; }
     }
 
@@ -16,5 +17,6 @@
         public int UserId { get; set; }
         public string FullName { get; set; }
         public string Email { get; set; }
+        public string AvatarUrl { get; set; }
     }
 }
