@@ -26,6 +26,7 @@ namespace DocumentSharingAPI.Repositories
                         FollowedUserId = f.FollowedUserId,
                         FollowedUserFullName = f.FollowedUser.FullName,
                         FollowedUserEmail = f.FollowedUser.Email,
+                        FollowedUserAvatarUrl = f.FollowedUser.AvatarUrl, // Thêm AvatarUrl
                         FollowedAt = f.FollowedAt
                     })
                     .ToListAsync();
@@ -48,7 +49,8 @@ namespace DocumentSharingAPI.Repositories
                         FollowId = f.FollowId,
                         UserId = f.UserId,
                         FullName = f.User.FullName,
-                        Email = f.User.Email
+                        Email = f.User.Email,
+                        AvatarUrl = f.User.AvatarUrl // Thêm AvatarUrl
                     })
                     .ToListAsync();
             }
