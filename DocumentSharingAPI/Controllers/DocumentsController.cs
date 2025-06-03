@@ -23,6 +23,7 @@ namespace DocumentSharingAPI.Controllers
         private readonly IUserDocumentRepository _userDocumentRepository;
         private readonly INotificationRepository _notificationRepository;
         private readonly ITagRepository _tagRepository;
+        private readonly IFollowRepository _followRepository;
         private readonly AppDbContext _context;
 
         public DocumentsController(
@@ -32,6 +33,7 @@ namespace DocumentSharingAPI.Controllers
             IUserDocumentRepository userDocumentRepository,
             INotificationRepository notificationRepository,
             ITagRepository tagRepository,
+            IFollowRepository followRepository,
             AppDbContext context)
         {
             _documentRepository = documentRepository;
@@ -40,6 +42,7 @@ namespace DocumentSharingAPI.Controllers
             _userDocumentRepository = userDocumentRepository;
             _notificationRepository = notificationRepository;
             _tagRepository = tagRepository;
+            _followRepository = followRepository;
             _context = context;
         }
 
@@ -460,31 +463,6 @@ namespace DocumentSharingAPI.Controllers
 
             await _userRepository.UpdatePointsAsync(model.UploadedBy, 10);
 
-            var follows = await _context.Follows
-                .Where(f => f.FollowedUserId == model.UploadedBy || f.CategoryId == model.CategoryId)
-                .ToListAsync();
-            foreach (var follow in follows)
-            {
-                var notification = new Notification
-                {
-                    UserId = follow.UserId,
-                    Message = $"New document '{document.Title}' uploaded in {category.Name}.",
-                    DocumentId = document.DocumentId,
-                    SentAt = DateTime.Now,
-                    IsRead = false
-                };
-
-                const int MaxNotificationsPerUser = 100;
-                var currentCount = await _notificationRepository.CountByUserIdAsync(follow.UserId);
-                if (currentCount >= MaxNotificationsPerUser)
-                {
-                    int countToDelete = currentCount - MaxNotificationsPerUser + 1;
-                    await _notificationRepository.DeleteOldestByUserIdAsync(follow.UserId, countToDelete);
-                }
-
-                await _notificationRepository.AddAsync(notification);
-            }
-
             var uploadCount = await _context.Documents.CountAsync(d => d.UploadedBy == model.UploadedBy);
             if (uploadCount >= 5)
             {
@@ -585,6 +563,7 @@ namespace DocumentSharingAPI.Controllers
             return Ok(documents);
         }
 
+        // Cập nhật endpoint Approve
         [HttpPut("{id}/approve")]
         public async Task<IActionResult> Approve(int id)
         {
@@ -599,7 +578,8 @@ namespace DocumentSharingAPI.Controllers
 
                 await _documentRepository.ApproveDocumentAsync(id);
 
-                var notification = new Notification
+                // Gửi thông báo cho người đăng tài liệu
+                var uploaderNotification = new Notification
                 {
                     UserId = document.UploadedBy,
                     Message = $"Tài liệu '{document.Title}' của bạn đã được duyệt.",
@@ -609,17 +589,39 @@ namespace DocumentSharingAPI.Controllers
                 };
 
                 const int MaxNotificationsPerUser = 100;
-                var currentCount = await _notificationRepository.CountByUserIdAsync(document.UploadedBy);
-                if (currentCount >= MaxNotificationsPerUser)
+                var uploaderNotificationCount = await _notificationRepository.CountByUserIdAsync(document.UploadedBy);
+                if (uploaderNotificationCount >= MaxNotificationsPerUser)
                 {
-                    int countToDelete = currentCount - MaxNotificationsPerUser + 1;
+                    int countToDelete = uploaderNotificationCount - MaxNotificationsPerUser + 1;
                     await _notificationRepository.DeleteOldestByUserIdAsync(document.UploadedBy, countToDelete);
                 }
+                await _notificationRepository.AddAsync(uploaderNotification);
 
-                await _notificationRepository.AddAsync(notification);
-                Console.WriteLine($"Document {id} approved and notification sent.");
+                // Gửi thông báo cho tất cả người theo dõi
+                var uploader = await _userRepository.GetByIdAsync(document.UploadedBy);
+                var followers = await _followRepository.GetFollowersByUserIdAsync(document.UploadedBy);
+                foreach (var follower in followers)
+                {
+                    var followerNotification = new Notification
+                    {
+                        UserId = follower.UserId,
+                        Message = $"{uploader.FullName} vừa đăng một tài liệu mới: '{document.Title}'.",
+                        DocumentId = document.DocumentId,
+                        SentAt = DateTime.Now,
+                        IsRead = false
+                    };
 
-                return Ok(new { Message = "Document approved and notification sent" });
+                    var followerNotificationCount = await _notificationRepository.CountByUserIdAsync(follower.UserId);
+                    if (followerNotificationCount >= MaxNotificationsPerUser)
+                    {
+                        int countToDelete = followerNotificationCount - MaxNotificationsPerUser + 1;
+                        await _notificationRepository.DeleteOldestByUserIdAsync(follower.UserId, countToDelete);
+                    }
+                    await _notificationRepository.AddAsync(followerNotification);
+                }
+
+                Console.WriteLine($"Document {id} approved and notifications sent to uploader and followers.");
+                return Ok(new { Message = "Tài liệu đã được duyệt và đã gửi thông báo" });
             }
             catch (Exception ex)
             {
