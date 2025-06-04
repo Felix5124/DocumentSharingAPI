@@ -9,6 +9,7 @@ using Microsoft.Extensions.FileProviders;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using System.Security.Claims;
+using DocumentSharingAPI.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -174,6 +175,7 @@ builder.Services.AddScoped<IBadgeRepository, BadgeRepository>();
 builder.Services.AddScoped<IUserBadgeRepository, UserBadgeRepository>();
 builder.Services.AddScoped<IUserDocumentRepository, UserDocumentRepository>();
 builder.Services.AddScoped<ITagRepository, TagRepository>();
+builder.Services.AddScoped<IGeminiChatService, GeminiChatService>();
 
 
 // Swagger Configuration
