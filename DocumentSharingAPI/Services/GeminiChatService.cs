@@ -55,10 +55,10 @@ Interpret user queries related to points, uploads, or downloads flexibly.
 
 If asked how to upload or download, provide clear, step-by-step instructions.
 - **To upload a document:**
-  1. Navigate to the 'Tải tài liệu lên' page from the user menu.
-  2. Fill in all required information on the form: Title, Description, Category, Tags.
-  3. Select the document file (e.g., PDF, DOCX) and a preview image (optional but recommended).
-  4. Click 'Tải lên' and wait for the confirmation. Your document will be pending approval by an admin.
+  1. Navigate to the '**Tải lên tài liệu** ' page from the user menu.
+  2. Fill in all required information on the form: **Title**, **Description**, **Category** ,**Required Points**, **Tags (optional)**.
+  3. **Select the document file** (e.g., PDF, DOCX) and a **cover image** (optional but recommended).
+  4. Click '**Tải lên**' and wait for the confirmation. Your document will be pending approval by an admin.
 
 - **To download a document, please follow these steps:**
   1. **Tìm tài liệu:** Đầu tiên, bạn cần tìm tài liệu muốn tải. Hãy sử dụng thanh tìm kiếm ở đầu trang (bạn có thể nhập từ khóa, tiêu đề, hoặc thẻ).
