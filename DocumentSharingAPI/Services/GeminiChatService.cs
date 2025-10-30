@@ -33,7 +33,7 @@ namespace DocumentSharingAPI.Services
                 return "I couldn't find your user information.";
             }
 
-            string userInfoContext = $"The user is '{user.FullName}' (ID: {userId}, Email: {user.Email}). Points: {user.Points}.";
+            string userInfoContext = $"The user is '{user.FullName}' (ID: {userId}, Email: {user.Email}). VIP Status: {(user.IsVip ? "VIP" : "Regular")}.";
 
             var uploads = await _userDocumentRepository.GetByUserIdAndActionAsync(userId, "Upload");
             userInfoContext += $" Documents uploaded: {uploads.Count()}.";
