@@ -177,6 +177,8 @@ builder.Services.AddScoped<IUserDocumentRepository, UserDocumentRepository>();
 builder.Services.AddScoped<ITagRepository, TagRepository>();
 builder.Services.AddScoped<IVipSubscriptionRepository, VipSubscriptionRepository>();
 builder.Services.AddScoped<IGeminiChatService, GeminiChatService>();
+builder.Services.AddSingleton<IBlobService, BlobService>();
+
 
 
 // Swagger Configuration

@@ -12,10 +12,13 @@ namespace DocumentSharingAPI.Controllers
     {
         private readonly IUserRepository _userRepository;
         private readonly AppDbContext _context;
-        public UsersController(IUserRepository userRepository, AppDbContext context)
+        private readonly IBlobService _blob;
+
+        public UsersController(IUserRepository userRepository, AppDbContext context, IBlobService blob)
         {
             _userRepository = userRepository;
             _context = context;
+            _blob = blob;
         }
 
         [HttpPost("register")]
@@ -38,7 +41,7 @@ namespace DocumentSharingAPI.Controllers
                 Email = model.Email,
                 FullName = model.FullName,
                 FirebaseUid = firebaseUser.Uid,
-                AvatarUrl = "/avatars/defaultavatar.png", // Đặt ảnh mặc định
+                AvatarUrl = "avatars/default.png", // Đặt ảnh mặc định từ Azure Blob
                 CreatedAt = DateTime.Now
             };
             await _userRepository.AddAsync(user);
@@ -75,7 +78,7 @@ namespace DocumentSharingAPI.Controllers
                 IsVip = false,
                 IsAdmin = false,
                 IsLocked = false,
-                AvatarUrl = "/avatars/defaultavatar.png", // Đặt ảnh mặc định
+                AvatarUrl = "avatars/default.png", // Đặt ảnh mặc định từ Azure Blob
                 CreatedAt = DateTime.UtcNow
             };
 
@@ -125,7 +128,9 @@ namespace DocumentSharingAPI.Controllers
                 u.UserId,
                 u.Email,
                 u.FullName,
-                u.AvatarUrl,
+                avatarUrl = string.IsNullOrEmpty(u.AvatarUrl) 
+                    ? null 
+                    : _blob.GetReadSasUrl("avatars", u.AvatarUrl, TimeSpan.FromMinutes(10)),
                 u.IsVip,
                 u.VipExpiryDate,
                 u.IsAdmin,
@@ -140,7 +145,25 @@ namespace DocumentSharingAPI.Controllers
         {
             var user = await _userRepository.GetByFirebaseUidAsync(uid);
             if (user == null) return NotFound();
-            return Ok(user);
+
+            var avatarUrl = string.IsNullOrEmpty(user.AvatarUrl) 
+                ? null 
+                : _blob.GetReadSasUrl("avatars", user.AvatarUrl, TimeSpan.FromMinutes(10));
+
+            return Ok(new
+            {
+                user.UserId,
+                user.Email,
+                user.FullName,
+                user.FirebaseUid,
+                avatarUrl,
+                user.IsVip,
+                user.VipExpiryDate,
+                user.IsAdmin,
+                user.IsLocked,
+                user.CreatedAt,
+                user.CommentCount
+            });
         }
 
         [HttpGet("{id}")]
@@ -149,12 +172,17 @@ namespace DocumentSharingAPI.Controllers
             var user = await _userRepository.GetByIdAsync(id);
             if (user == null)
                 return NotFound();
+
+            var avatarUrl = string.IsNullOrEmpty(user.AvatarUrl) 
+                ? null 
+                : _blob.GetReadSasUrl("avatars", user.AvatarUrl, TimeSpan.FromMinutes(10));
+
             return Ok(new
             {
                 user.UserId,
                 user.Email,
                 user.FullName,
-                user.AvatarUrl,
+                avatarUrl,
                 user.IsVip,
                 user.VipExpiryDate,
                 user.IsAdmin,
@@ -185,8 +213,20 @@ namespace DocumentSharingAPI.Controllers
             if (user == null)
                 return NotFound();
 
+            // Xóa avatar trước khi xóa user (nếu không phải default)
+            if (!string.IsNullOrEmpty(user.AvatarUrl) && !user.AvatarUrl.Equals("avatars/default.png", StringComparison.OrdinalIgnoreCase))
+            {
+                await _blob.DeleteAsync("avatars", user.AvatarUrl);
+            }
+
             await _userRepository.DeleteAsync(id);
-            await FirebaseAuth.DefaultInstance.DeleteUserAsync(user.Email);
+            
+            // Sử dụng FirebaseUid thay vì Email để xóa Firebase user
+            if (!string.IsNullOrEmpty(user.FirebaseUid))
+            {
+                await FirebaseAuth.DefaultInstance.DeleteUserAsync(user.FirebaseUid);
+            }
+            
             return NoContent();
         }
 
@@ -242,37 +282,30 @@ namespace DocumentSharingAPI.Controllers
             try
             {
                 var user = await _userRepository.GetByIdAsync(id);
-                if (user == null)
+                if (user == null) 
                     return NotFound(new { message = "Người dùng không tồn tại." });
+                
+                if (file == null || file.Length == 0) 
+                    return BadRequest(new { message = "Không có file tải lên." });
 
-                if (file == null || file.Length == 0)
-                    return BadRequest(new { message = "Không có file được tải lên." });
+                var allowed = new[] { ".jpg", ".jpeg", ".png", ".gif" };
+                var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+                if (!allowed.Contains(ext))
+                    return BadRequest(new { message = "Chỉ hỗ trợ .jpg, .jpeg, .png, .gif." });
 
-                var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif" };
-                var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
-                if (!allowedExtensions.Contains(extension))
-                    return BadRequest(new { message = "Định dạng file không được hỗ trợ. Chỉ hỗ trợ .jpg, .jpeg, .png, .gif." });
+                // Xóa avatar cũ (nếu không phải mặc định)
+                if (!string.IsNullOrEmpty(user.AvatarUrl) && !user.AvatarUrl.Equals("avatars/default.png", StringComparison.OrdinalIgnoreCase))
+                    await _blob.DeleteAsync("avatars", user.AvatarUrl);
 
-                var fileName = $"{id}_{DateTime.Now.Ticks}{extension}";
-                var uploadsFolder = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "avatars");
-                var filePath = Path.Combine(uploadsFolder, fileName);
+                var blobName = $"avatars/{id}_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}{ext}";
+                await using var s = file.OpenReadStream();
+                await _blob.UploadAsync("avatars", blobName, s, file.ContentType);
 
-                if (!Directory.Exists(uploadsFolder))
-                    Directory.CreateDirectory(uploadsFolder);
-
-                using (var stream = new FileStream(filePath, FileMode.Create))
-                {
-                    await file.CopyToAsync(stream);
-                }
-
-                user.AvatarUrl = $"/avatars/{fileName}";
+                user.AvatarUrl = blobName;
                 await _userRepository.UpdateAsync(user);
 
-                return Ok(new
-                {
-                    message = "Tải avatar lên thành công.",
-                    avatarUrl = user.AvatarUrl
-                });
+                var sas = _blob.GetReadSasUrl("avatars", user.AvatarUrl, TimeSpan.FromMinutes(10));
+                return Ok(new { message = "OK", avatarUrl = sas, blob = user.AvatarUrl });
             }
             catch (Exception ex)
             {
@@ -338,12 +371,16 @@ namespace DocumentSharingAPI.Controllers
                 if (topCommenter == null)
                     return NotFound("Không có người dùng nào có bình luận.");
 
+                var avatarUrl = string.IsNullOrEmpty(topCommenter.AvatarUrl) 
+                    ? null 
+                    : _blob.GetReadSasUrl("avatars", topCommenter.AvatarUrl, TimeSpan.FromMinutes(10));
+
                 return Ok(new
                 {
                     topCommenter.UserId,
                     topCommenter.FullName,
                     topCommenter.Email,
-                    topCommenter.AvatarUrl, // Đảm bảo trả về AvatarUrl
+                    avatarUrl,
                     topCommenter.CommentCount
                 });
             }
@@ -368,12 +405,16 @@ namespace DocumentSharingAPI.Controllers
                 if (topVipUser == null)
                     return NotFound("Không có người dùng VIP nào.");
 
+                var avatarUrl = string.IsNullOrEmpty(topVipUser.AvatarUrl) 
+                    ? null 
+                    : _blob.GetReadSasUrl("avatars", topVipUser.AvatarUrl, TimeSpan.FromMinutes(10));
+
                 return Ok(new
                 {
                     topVipUser.UserId,
                     topVipUser.FullName,
                     topVipUser.Email,
-                    topVipUser.AvatarUrl,
+                    avatarUrl,
                     VipStatus = "VIP",
                     topVipUser.VipExpiryDate
                 });
