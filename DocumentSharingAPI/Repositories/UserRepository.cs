@@ -221,5 +221,126 @@ namespace DocumentSharingAPI.Repositories
                 throw; // Ném lại lỗi để controller xử lý
             }
         }
+<<<<<<< Updated upstream
+=======
+
+        // VIP System methods
+        public async Task ResetDailyDownloadsAsync()
+        {
+            var usersToReset = await _context.Users
+                .Where(u => u.LastDownloadResetDate < DateTime.Today)
+                .ToListAsync();
+
+            foreach (var user in usersToReset)
+            {
+                user.VipDownloadsUsedToday = 0;
+                user.RegularDownloadsUsedToday = 0;
+                user.LastDownloadResetDate = DateTime.Today;
+            }
+
+            await _context.SaveChangesAsync();
+        }
+
+        public async Task UpdateDownloadCountsAsync(int userId, bool isVipDownload)
+        {
+            var user = await GetByIdAsync(userId);
+            if (user != null)
+            {
+                if (isVipDownload)
+                {
+                    // Tài liệu VIP: ưu tiên dùng quota VIP nếu là VIP user, nếu không thì dùng bonus
+                    if (user.IsVip && user.VipExpiryDate > DateTime.Now)
+                    {
+                        user.VipDownloadsUsedToday++;
+                    }
+                    else if (user.VipBonusDownloads > 0)
+                    {
+                        user.VipBonusDownloads--;
+                    }
+                }
+                else
+                {
+                    // Tài liệu thường: ưu tiên dùng quota thường, sau đó mới dùng bonus
+                    if ((user.IsVip && user.VipExpiryDate > DateTime.Now) || user.RegularDownloadsUsedToday < 2)
+                    {
+                        user.RegularDownloadsUsedToday++;
+                    }
+                    else if (user.RegularBonusDownloads > 0)
+                    {
+                        user.RegularBonusDownloads--;
+                    }
+                }
+                await UpdateAsync(user);
+            }
+        }
+
+        public async Task<bool> CanDownloadAsync(int userId, bool isVipDocument)
+        {
+            var user = await GetByIdAsync(userId);
+            if (user == null) return false;
+
+            // Reset daily downloads if needed
+            if (user.LastDownloadResetDate < DateTime.Today)
+            {
+                user.VipDownloadsUsedToday = 0;
+                user.RegularDownloadsUsedToday = 0;
+                user.LastDownloadResetDate = DateTime.Today;
+                await UpdateAsync(user);
+            }
+
+            if (isVipDocument)
+            {
+                // Tài liệu VIP chỉ VIP user hoặc có bonus downloads VIP mới tải được
+                if (user.IsVip && user.VipExpiryDate > DateTime.Now)
+                {
+                    return user.VipDownloadsUsedToday < 10; // VIP: 10 lượt tải VIP/ngày
+                }
+                else
+                {
+                    return user.VipBonusDownloads > 0; // Thường: cần có bonus download VIP
+                }
+            }
+            else
+            {
+                // Tài liệu thường
+                if (user.IsVip && user.VipExpiryDate > DateTime.Now)
+                {
+                    return user.RegularDownloadsUsedToday < 10; // VIP: 10 lượt tải thường/ngày
+                }
+                else
+                {
+                    // Tài khoản thường: 2 lượt cơ bản + bonus downloads thường
+                    return (user.RegularDownloadsUsedToday < 2) || (user.RegularBonusDownloads > 0);
+                }
+            }
+        }
+
+        public async Task AddVipBonusDownloadAsync(int userId)
+        {
+            var user = await GetByIdAsync(userId);
+            if (user != null)
+            {
+                user.VipBonusDownloads++;
+                await UpdateAsync(user);
+            }
+        }
+
+        public async Task AddBonusDownloadAsync(int userId, bool isVipBonus)
+        {
+            var user = await GetByIdAsync(userId);
+            if (user != null)
+            {
+                if (isVipBonus)
+                {
+                    user.VipBonusDownloads++;
+                }
+                else
+                {
+                    user.RegularBonusDownloads++;
+                }
+                await UpdateAsync(user);
+            }
+        }
+>>>>>>> Stashed changes
     }
 }

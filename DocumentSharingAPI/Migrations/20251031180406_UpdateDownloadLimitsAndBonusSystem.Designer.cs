@@ -4,6 +4,7 @@ using DocumentSharingAPI.Models;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace DocumentSharingAPI.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251031180406_UpdateDownloadLimitsAndBonusSystem")]
+    partial class UpdateDownloadLimitsAndBonusSystem
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -105,6 +108,9 @@ namespace DocumentSharingAPI.Migrations
 
                     SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("DocumentId"));
 
+                    b.Property<int>("ApprovalPriority")
+                        .HasColumnType("int");
+
                     b.Property<int>("CategoryId")
                         .HasColumnType("int");
 
@@ -135,11 +141,8 @@ namespace DocumentSharingAPI.Migrations
                     b.Property<bool>("IsLock")
                         .HasColumnType("bit");
 
-                    b.Property<int>("PointsRequired")
-                        .HasColumnType("int");
-
-                    b.Property<int>("SchoolId")
-                        .HasColumnType("int");
+                    b.Property<bool>("IsVipOnly")
+                        .HasColumnType("bit");
 
                     b.Property<string>("Title")
                         .IsRequired()
@@ -154,8 +157,6 @@ namespace DocumentSharingAPI.Migrations
                     b.HasKey("DocumentId");
 
                     b.HasIndex("CategoryId");
-
-                    b.HasIndex("SchoolId");
 
                     b.HasIndex("UploadedBy");
 
@@ -329,31 +330,6 @@ namespace DocumentSharingAPI.Migrations
                     b.ToTable("Recommendations");
                 });
 
-            modelBuilder.Entity("DocumentSharingAPI.Models.School", b =>
-                {
-                    b.Property<int>("SchoolId")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("SchoolId"));
-
-                    b.Property<string>("ExternalUrl")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("LogoUrl")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.HasKey("SchoolId");
-
-                    b.ToTable("Schools");
-                });
-
             modelBuilder.Entity("DocumentSharingAPI.Models.Tag", b =>
                 {
                     b.Property<int>("TagId")
@@ -416,13 +392,9 @@ namespace DocumentSharingAPI.Migrations
                     b.Property<bool>("IsLocked")
                         .HasColumnType("bit");
 
-                    b.Property<string>("Level")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
+                    b.Property<bool>("IsVip")
+                        .HasColumnType("bit");
 
-<<<<<<< Updated upstream
-                    b.Property<int>("Points")
-=======
                     b.Property<DateTime>("LastDownloadResetDate")
                         .HasColumnType("datetime2");
 
@@ -430,15 +402,18 @@ namespace DocumentSharingAPI.Migrations
                         .HasColumnType("int");
 
                     b.Property<int>("RegularDownloadsUsedToday")
->>>>>>> Stashed changes
                         .HasColumnType("int");
 
-                    b.Property<int?>("SchoolId")
+                    b.Property<int>("VipBonusDownloads")
                         .HasColumnType("int");
+
+                    b.Property<int>("VipDownloadsUsedToday")
+                        .HasColumnType("int");
+
+                    b.Property<DateTime?>("VipExpiryDate")
+                        .HasColumnType("datetime2");
 
                     b.HasKey("UserId");
-
-                    b.HasIndex("SchoolId");
 
                     b.ToTable("Users");
                 });
@@ -482,6 +457,51 @@ namespace DocumentSharingAPI.Migrations
                     b.ToTable("UserDocuments");
                 });
 
+            modelBuilder.Entity("DocumentSharingAPI.Models.VipSubscription", b =>
+                {
+                    b.Property<int>("SubscriptionId")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("SubscriptionId"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("datetime2");
+
+                    b.Property<DateTime>("EndDate")
+                        .HasColumnType("datetime2");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("bit");
+
+                    b.Property<string>("PaymentMethod")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<decimal>("Price")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<DateTime>("StartDate")
+                        .HasColumnType("datetime2");
+
+                    b.Property<string>("SubscriptionType")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<string>("TransactionId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(max)");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("int");
+
+                    b.HasKey("SubscriptionId");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("VipSubscriptions");
+                });
+
             modelBuilder.Entity("DocumentSharingAPI.Models.Comment", b =>
                 {
                     b.HasOne("DocumentSharingAPI.Models.Document", "Document")
@@ -509,12 +529,6 @@ namespace DocumentSharingAPI.Migrations
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
-                    b.HasOne("DocumentSharingAPI.Models.School", "School")
-                        .WithMany()
-                        .HasForeignKey("SchoolId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
                     b.HasOne("DocumentSharingAPI.Models.User", "User")
                         .WithMany("UploadedDocuments")
                         .HasForeignKey("UploadedBy")
@@ -522,8 +536,6 @@ namespace DocumentSharingAPI.Migrations
                         .IsRequired();
 
                     b.Navigation("Category");
-
-                    b.Navigation("School");
 
                     b.Navigation("User");
                 });
@@ -638,16 +650,6 @@ namespace DocumentSharingAPI.Migrations
                     b.Navigation("User");
                 });
 
-            modelBuilder.Entity("DocumentSharingAPI.Models.User", b =>
-                {
-                    b.HasOne("DocumentSharingAPI.Models.School", "School")
-                        .WithMany()
-                        .HasForeignKey("SchoolId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
-                    b.Navigation("School");
-                });
-
             modelBuilder.Entity("DocumentSharingAPI.Models.UserBadge", b =>
                 {
                     b.HasOne("DocumentSharingAPI.Models.Badge", "Badge")
@@ -682,6 +684,17 @@ namespace DocumentSharingAPI.Migrations
                         .IsRequired();
 
                     b.Navigation("Document");
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("DocumentSharingAPI.Models.VipSubscription", b =>
+                {
+                    b.HasOne("DocumentSharingAPI.Models.User", "User")
+                        .WithMany("VipSubscriptions")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
 
                     b.Navigation("User");
                 });
@@ -724,6 +737,8 @@ namespace DocumentSharingAPI.Migrations
                     b.Navigation("Follows");
 
                     b.Navigation("UploadedDocuments");
+
+                    b.Navigation("VipSubscriptions");
                 });
 #pragma warning restore 612, 618
         }

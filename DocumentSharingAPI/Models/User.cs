@@ -23,6 +23,18 @@ namespace DocumentSharingAPI.Models
         public DateTime CreatedAt { get; set; } = DateTime.Now;
         public int CommentCount { get; set; }
 
+<<<<<<< Updated upstream
+=======
+        // VIP System
+        public bool IsVip { get; set; } = false;
+        public DateTime? VipExpiryDate { get; set; }
+        public int VipDownloadsUsedToday { get; set; } = 0;
+        public int RegularDownloadsUsedToday { get; set; } = 0;
+        public int VipBonusDownloads { get; set; } = 0; // Bonus downloads VIP từ việc upload tài liệu
+        public int RegularBonusDownloads { get; set; } = 0; // Bonus downloads thường từ việc upload tài liệu
+        public DateTime LastDownloadResetDate { get; set; } = DateTime.Today;
+
+>>>>>>> Stashed changes
         // Quan hệ
         public ICollection<Document> UploadedDocuments { get; set; }
         public ICollection<UserBadge> Badges { get; set; }
