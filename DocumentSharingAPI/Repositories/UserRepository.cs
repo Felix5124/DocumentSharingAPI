@@ -22,25 +22,7 @@ namespace DocumentSharingAPI.Repositories
             return await _context.Users.FirstOrDefaultAsync(u => u.Email == email);
         }
 
-        public async Task UpdatePointsAsync(int userId, int points)
-        {
-            var user = await _context.Users.FindAsync(userId);
-            if (user == null)
-                throw new Exception("User not found");
-
-            user.Points += points;
-            if (user.Points < 0)
-                user.Points = 0;
-
-            if (user.Points >= 1000)
-                user.Level = "Master";
-            else if (user.Points >= 500)
-                user.Level = "Scholar";
-            else
-                user.Level = "Newbie";
-
-            await _context.SaveChangesAsync();
-        }
+        // Points system removed - VIP system used instead
 
         public async Task UpdateLockStatusAsync(int userId, bool isLocked)
         {
@@ -57,14 +39,7 @@ namespace DocumentSharingAPI.Repositories
             Console.WriteLine($"Lock status updated for user ID {userId}: IsLocked = {user.IsLocked}");
         }
 
-        public async Task<IEnumerable<User>> GetTopUsersAsync(int limit)
-        {
-            return await _context.Users
-                .OrderByDescending(u => u.Points)
-                .ThenByDescending(u => u.UploadedDocuments.Count)
-                .Take(limit)
-                .ToListAsync();
-        }
+        // GetTopUsersAsync removed - Points system deprecated
 
         public new async Task<User> GetByIdAsync(int id)
         {
@@ -104,37 +79,7 @@ namespace DocumentSharingAPI.Repositories
             };
         }
 
-        // Thêm phương thức: Người có nhiều điểm nhất
-        public async Task<User> GetTopPointsUserAsync()
-        {
-            return await _context.Users
-                .OrderByDescending(u => u.Points)
-                .Select(u => new User
-                {
-                    UserId = u.UserId,
-                    Email = u.Email,
-                    FullName = u.FullName, 
-                    AvatarUrl = u.AvatarUrl,
-                    Points = u.Points
-                })
-                .FirstOrDefaultAsync();
-        }
-
-        public async Task<IEnumerable<UserRankingItemDto>> GetTopUsersByPointsAsync(int limit)
-        {
-            return await _context.Users
-                .OrderByDescending(u => u.Points)
-                .Take(limit)
-                .Select(u => new UserRankingItemDto
-                {
-                    UserId = u.UserId,
-                    FullName = u.FullName,
-                    Email = u.Email,
-                    AvatarUrl = u.AvatarUrl,
-                    Value = u.Points
-                })
-                .ToListAsync();
-        }
+        // Points system removed - VIP system used instead
 
         public async Task<IEnumerable<UserRankingItemDto>> GetTopUsersByUploadsAsync(int limit)
         {
@@ -219,6 +164,90 @@ namespace DocumentSharingAPI.Repositories
                 Console.WriteLine($"ERROR in GetTopUsersByDocumentDownloadsAsync: {ex.ToString()}");
                 // Log lỗi này (ví dụ: sử dụng ILogger)
                 throw; // Ném lại lỗi để controller xử lý
+            }
+        }
+
+        // VIP System methods
+        public async Task ResetDailyDownloadsAsync()
+        {
+            var usersToReset = await _context.Users
+                .Where(u => u.LastDownloadResetDate < DateTime.Today)
+                .ToListAsync();
+
+            foreach (var user in usersToReset)
+            {
+                user.VipDownloadsUsedToday = 0;
+                user.RegularDownloadsUsedToday = 0;
+                user.LastDownloadResetDate = DateTime.Today;
+            }
+
+            await _context.SaveChangesAsync();
+        }
+
+        public async Task UpdateDownloadCountsAsync(int userId, bool isVipDownload)
+        {
+            var user = await GetByIdAsync(userId);
+            if (user != null)
+            {
+                if (isVipDownload)
+                {
+                    user.VipDownloadsUsedToday++;
+                }
+                else
+                {
+                    user.RegularDownloadsUsedToday++;
+                }
+                await UpdateAsync(user);
+            }
+        }
+
+        public async Task<bool> CanDownloadAsync(int userId, bool isVipDocument)
+        {
+            var user = await GetByIdAsync(userId);
+            if (user == null) return false;
+
+            // Reset daily downloads if needed
+            if (user.LastDownloadResetDate < DateTime.Today)
+            {
+                user.VipDownloadsUsedToday = 0;
+                user.RegularDownloadsUsedToday = 0;
+                user.LastDownloadResetDate = DateTime.Today;
+                await UpdateAsync(user);
+            }
+
+            if (isVipDocument)
+            {
+                // Tài liệu VIP chỉ VIP user hoặc có bonus downloads mới tải được
+                if (user.IsVip && user.VipExpiryDate > DateTime.Now)
+                {
+                    return user.VipDownloadsUsedToday < 5;
+                }
+                else
+                {
+                    return user.VipBonusDownloads > 0;
+                }
+            }
+            else
+            {
+                // Tài liệu thường
+                if (user.IsVip && user.VipExpiryDate > DateTime.Now)
+                {
+                    return user.RegularDownloadsUsedToday < 5;
+                }
+                else
+                {
+                    return user.RegularDownloadsUsedToday < 1;
+                }
+            }
+        }
+
+        public async Task AddVipBonusDownloadAsync(int userId)
+        {
+            var user = await GetByIdAsync(userId);
+            if (user != null)
+            {
+                user.VipBonusDownloads++;
+                await UpdateAsync(user);
             }
         }
     }

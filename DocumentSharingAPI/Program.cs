@@ -175,6 +175,7 @@ builder.Services.AddScoped<IBadgeRepository, BadgeRepository>();
 builder.Services.AddScoped<IUserBadgeRepository, UserBadgeRepository>();
 builder.Services.AddScoped<IUserDocumentRepository, UserDocumentRepository>();
 builder.Services.AddScoped<ITagRepository, TagRepository>();
+builder.Services.AddScoped<IVipSubscriptionRepository, VipSubscriptionRepository>();
 builder.Services.AddScoped<IGeminiChatService, GeminiChatService>();
 
 
@@ -249,6 +250,10 @@ app.UseCors("AllowFrontend");
 app.UseRouting();
 app.UseAuthentication();
 app.UseAuthorization();
+
+// Thêm route mặc định chuyển hướng đến Swagger
+app.MapGet("/", () => Results.Redirect("/swagger"));
+
 app.MapControllers();
 
 app.Run();
