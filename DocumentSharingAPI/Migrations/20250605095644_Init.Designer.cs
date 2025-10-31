@@ -12,8 +12,8 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace DocumentSharingAPI.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20250529145508_Initial")]
-    partial class Initial
+    [Migration("20250605095644_Init")]
+    partial class Init
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)

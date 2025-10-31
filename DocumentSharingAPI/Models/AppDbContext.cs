@@ -19,7 +19,7 @@ namespace DocumentSharingAPI.Models
         public DbSet<Post> Posts { get; set; }
         public DbSet<PostComment> PostComments { get; set; }
         public DbSet<Recommendation> Recommendations { get; set; }
-        public DbSet<School> Schools { get; set; }
+        public DbSet<VipSubscription> VipSubscriptions { get; set; }
         public DbSet<Tag> Tags { get; set; }
         public DbSet<DocumentTag> DocumentTags { get; set; }
 
@@ -104,19 +104,13 @@ namespace DocumentSharingAPI.Models
                 .WithMany()
                 .HasForeignKey(pc => pc.UserId)
                 .OnDelete(DeleteBehavior.Restrict);
-            // Cấu hình quan hệ User-School
-            modelBuilder.Entity<User>()
-                .HasOne(u => u.School)
-                .WithMany()
-                .HasForeignKey(u => u.SchoolId)
-                .OnDelete(DeleteBehavior.Restrict);
 
-            // Cấu hình quan hệ Document-School
-            modelBuilder.Entity<Document>()
-                .HasOne(d => d.School)
-                .WithMany()
-                .HasForeignKey(d => d.SchoolId)
-                .OnDelete(DeleteBehavior.Restrict);
+            // Cấu hình quan hệ VipSubscription-User
+            modelBuilder.Entity<VipSubscription>()
+                .HasOne(vs => vs.User)
+                .WithMany(u => u.VipSubscriptions)
+                .HasForeignKey(vs => vs.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
 
             modelBuilder.Entity<Tag>(entity =>
             {
