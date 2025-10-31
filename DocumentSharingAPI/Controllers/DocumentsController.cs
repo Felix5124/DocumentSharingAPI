@@ -25,6 +25,7 @@ namespace DocumentSharingAPI.Controllers
         private readonly ITagRepository _tagRepository;
         private readonly IFollowRepository _followRepository;
         private readonly AppDbContext _context;
+        private readonly IBlobService _blob;
 
         public DocumentsController(
             IDocumentRepository documentRepository,
@@ -34,7 +35,8 @@ namespace DocumentSharingAPI.Controllers
             INotificationRepository notificationRepository,
             ITagRepository tagRepository,
             IFollowRepository followRepository,
-            AppDbContext context)
+            AppDbContext context,
+            IBlobService blob)
         {
             _documentRepository = documentRepository;
             _categoryRepository = categoryRepository;
@@ -44,6 +46,7 @@ namespace DocumentSharingAPI.Controllers
             _tagRepository = tagRepository;
             _followRepository = followRepository;
             _context = context;
+            _blob = blob;
         }
 
         [HttpGet]
@@ -183,24 +186,26 @@ namespace DocumentSharingAPI.Controllers
 
             if (model.CoverImage != null && model.CoverImage.Length > 0)
             {
-                string newCoverPath = await SaveCoverImageAsync(model.CoverImage);
-                if (newCoverPath == "INVALID_TYPE")
+                var allowedImageExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".tiff", ".tif", ".heic", ".heif" };
+                var coverExtension = Path.GetExtension(model.CoverImage.FileName).ToLowerInvariant();
+
+                if (!allowedImageExtensions.Contains(coverExtension))
                 {
                     return BadRequest("Định dạng ảnh bìa không hợp lệ. Chỉ chấp nhận JPG, JPEG, PNG, GIF, TIFF, TIF, HEIC, HEIF.");
                 }
-                if (!string.IsNullOrEmpty(newCoverPath))
+
+                // Xóa ảnh bìa cũ nếu có
+                if (!string.IsNullOrEmpty(document.CoverImageUrl))
                 {
-                    if (!string.IsNullOrEmpty(document.CoverImageUrl) && !document.CoverImageUrl.Contains("default-cover"))
-                    {
-                        var oldCoverFilePath = Path.Combine(Directory.GetCurrentDirectory(), document.CoverImageUrl);
-                        if (System.IO.File.Exists(oldCoverFilePath))
-                        {
-                            try { System.IO.File.Delete(oldCoverFilePath); }
-                            catch (Exception ex) { Console.WriteLine($"Error deleting old cover file {oldCoverFilePath}: {ex.Message}"); }
-                        }
-                    }
-                    document.CoverImageUrl = newCoverPath;
+                    await _blob.DeleteAsync("covers", document.CoverImageUrl);
                 }
+
+                // Upload ảnh bìa mới
+                var newGuid = Guid.NewGuid().ToString("N");
+                var newCoverName = $"covers/{newGuid}{coverExtension}";
+                await using var coverStream = model.CoverImage.OpenReadStream();
+                await _blob.UploadAsync("covers", newCoverName, coverStream, model.CoverImage.ContentType);
+                document.CoverImageUrl = newCoverName;
             }
 
             if (model.File != null && model.File.Length > 0)
@@ -214,34 +219,23 @@ namespace DocumentSharingAPI.Controllers
                     return BadRequest("Định dạng file không hợp lệ. Chỉ chấp nhận PDF, DOCX, và TXT.");
                 }
 
+                // Xóa file cũ trên Azure Blob
                 if (!string.IsNullOrEmpty(document.FileUrl))
                 {
-                    var oldFilePath = Path.Combine(Directory.GetCurrentDirectory(), document.FileUrl);
-                    if (System.IO.File.Exists(oldFilePath))
-                    {
-                        try
-                        {
-                            System.IO.File.Delete(oldFilePath);
-                            Console.WriteLine($"Deleted old file: {oldFilePath}");
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine($"Error deleting old file {oldFilePath}: {ex.Message}");
-                        }
-                    }
+                    await _blob.DeleteAsync("documents", document.FileUrl);
+                    Console.WriteLine($"Deleted old blob: {document.FileUrl}");
                 }
 
-                var fileName = $"{Guid.NewGuid()}_{Path.GetFileName(model.File.FileName)}";
-                var filePath = Path.Combine(Directory.GetCurrentDirectory(), "Files", fileName);
-                using (var stream = new FileStream(filePath, FileMode.Create))
-                {
-                    await model.File.CopyToAsync(stream);
-                }
+                // Upload file mới lên Azure Blob
+                var newGuid = Guid.NewGuid().ToString("N");
+                var newBlobName = $"documents/{newGuid}/{Path.GetFileName(model.File.FileName)}";
+                await using var fileStream = model.File.OpenReadStream();
+                await _blob.UploadAsync("documents", newBlobName, fileStream, model.File.ContentType);
 
-                document.FileUrl = $"Files/{fileName}";
+                document.FileUrl = newBlobName;
                 document.FileType = extension.TrimStart('.');
                 document.FileSize = model.File.Length;
-                Console.WriteLine($"Updated file for document {id}: {fileName}");
+                Console.WriteLine($"Updated file for document {id}: {newBlobName}");
             }
 
             if (model.Tags != null) // Nếu model.Tags là null, nghĩa là client không muốn thay đổi tags
@@ -300,25 +294,18 @@ namespace DocumentSharingAPI.Controllers
                     return NotFound("Tài liệu không tồn tại.");
                 }
 
+                // Xóa file tài liệu trên Azure Blob
                 if (!string.IsNullOrEmpty(document.FileUrl))
                 {
-                    var filePath = Path.Combine(Directory.GetCurrentDirectory(), document.FileUrl);
-                    if (System.IO.File.Exists(filePath))
-                    {
-                        try
-                        {
-                            System.IO.File.Delete(filePath);
-                            Console.WriteLine($"Deleted file: {filePath}");
-                        }
-                        catch (Exception ex)
-                        {
-                            Console.WriteLine($"Error deleting file {filePath}: {ex.Message}");
-                        }
-                    }
-                    else
-                    {
-                        Console.WriteLine($"File not found: {filePath}");
-                    }
+                    await _blob.DeleteAsync("documents", document.FileUrl);
+                    Console.WriteLine($"Deleted document blob: {document.FileUrl}");
+                }
+
+                // Xóa ảnh bìa trên Azure Blob
+                if (!string.IsNullOrEmpty(document.CoverImageUrl))
+                {
+                    await _blob.DeleteAsync("covers", document.CoverImageUrl);
+                    Console.WriteLine($"Deleted cover blob: {document.CoverImageUrl}");
                 }
 
                 await _documentRepository.DeleteAsync(id);
@@ -371,35 +358,38 @@ namespace DocumentSharingAPI.Controllers
                 return BadRequest("Định dạng file không hợp lệ. Chỉ chấp nhận PDF, DOCX, và TXT.");
             }
 
-            var fileName = $"{Guid.NewGuid()}_{Path.GetFileName(model.File.FileName)}";
-            var filePath = Path.Combine(Directory.GetCurrentDirectory(), "Files", fileName);
-            using (var stream = new FileStream(filePath, FileMode.Create))
-            {
-                await model.File.CopyToAsync(stream);
-            }
+            // Upload file tài liệu lên Azure Blob
+            var fileGuid = Guid.NewGuid().ToString("N");
+            var blobName = $"documents/{fileGuid}/{Path.GetFileName(model.File.FileName)}";
+            await using var fileStream = model.File.OpenReadStream();
+            await _blob.UploadAsync("documents", blobName, fileStream, model.File.ContentType);
 
-            string coverImageUrl = "ImageCovers/cat.jpg";
+            // Upload ảnh bìa lên Azure Blob
+            string coverImageUrl = null;
             if (model.CoverImage != null && model.CoverImage.Length > 0)
             {
-                string uploadedCoverPath = await SaveCoverImageAsync(model.CoverImage);
-                if (uploadedCoverPath == "INVALID_TYPE")
+                var allowedImageExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".tiff", ".tif", ".heic", ".heif" };
+                var coverExtension = Path.GetExtension(model.CoverImage.FileName).ToLowerInvariant();
+
+                if (!allowedImageExtensions.Contains(coverExtension))
                 {
-                    return BadRequest("Định dạng ảnh bìa không hợp lệ. Chỉ chấp nhận JPG, PNG, GIF, TIFF, TIF, HEIC, HEIF.");
+                    return BadRequest("Định dạng ảnh bìa không hợp lệ. Chỉ chấp nhận JPG, JPEG, PNG, GIF, TIFF, TIF, HEIC, HEIF.");
                 }
-                if (!string.IsNullOrEmpty(uploadedCoverPath))
-                {
-                    coverImageUrl = uploadedCoverPath;
-                }
+
+                var coverName = $"covers/{fileGuid}{coverExtension}";
+                await using var coverStream = model.CoverImage.OpenReadStream();
+                await _blob.UploadAsync("covers", coverName, coverStream, model.CoverImage.ContentType);
+                coverImageUrl = coverName;
             }
 
             var document = new Document
             {
                 Title = model.Title,
                 Description = model.Description,
-                FileUrl = $"Files/{fileName}",
+                FileUrl = blobName, // Lưu blob name thay vì đường dẫn file
                 FileType = extension.TrimStart('.'),
                 FileSize = model.File.Length,
-                CoverImageUrl = coverImageUrl,
+                CoverImageUrl = coverImageUrl, // Có thể là null hoặc blob name
                 CategoryId = model.CategoryId,
                 UploadedBy = model.UploadedBy,
                 UploadedAt = DateTime.Now,
@@ -699,12 +689,13 @@ namespace DocumentSharingAPI.Controllers
 
                 await _context.SaveChangesAsync();
 
-                var filePath = Path.Combine(Directory.GetCurrentDirectory(), document.FileUrl);
-                if (!System.IO.File.Exists(filePath))
-                    return NotFound(new { message = "Không tìm thấy file." });
+                // Tạo SAS URL cho download (có thể dùng cách này để redirect)
+                var sasUrl = _blob.GetReadSasUrl("documents", document.FileUrl, TimeSpan.FromMinutes(10));
+                return Ok(new { url = sasUrl, fileName = $"{document.Title}.{document.FileType}" });
 
-                var fileBytes = await System.IO.File.ReadAllBytesAsync(filePath);
-                return File(fileBytes, $"application/{document.FileType}", $"{document.Title}.{document.FileType}");
+                // Hoặc có thể stream file qua API (không khuyến khích cho file lớn)
+                // var stream = await _blob.DownloadAsync("documents", document.FileUrl);
+                // return File(stream, $"application/{document.FileType}", $"{document.Title}.{document.FileType}");
             }
             catch (Exception ex)
             {
@@ -734,13 +725,6 @@ namespace DocumentSharingAPI.Controllers
                 return BadRequest("Tài liệu đã bị khóa.");
             }
 
-            var filePath = Path.Combine(Directory.GetCurrentDirectory(), document.FileUrl);
-            if (!System.IO.File.Exists(filePath))
-            {
-                Console.WriteLine($"File not found: {filePath}");
-                return NotFound("Không tìm thấy file.");
-            }
-
             if (document.FileType.ToLower() != "pdf")
             {
                 Console.WriteLine($"Document {id} is not a PDF.");
@@ -749,8 +733,13 @@ namespace DocumentSharingAPI.Controllers
 
             try
             {
-                var fileBytes = await System.IO.File.ReadAllBytesAsync(filePath);
-                return File(fileBytes, "application/pdf", enableRangeProcessing: true);
+                // Tạo SAS URL cho preview PDF
+                var sasUrl = _blob.GetReadSasUrl("documents", document.FileUrl, TimeSpan.FromMinutes(5));
+                return Ok(new { url = sasUrl });
+
+                // Hoặc có thể stream file qua API
+                // var stream = await _blob.DownloadAsync("documents", document.FileUrl);
+                // return File(stream, "application/pdf", enableRangeProcessing: true);
             }
             catch (Exception ex)
             {
@@ -911,38 +900,7 @@ namespace DocumentSharingAPI.Controllers
             return Ok(result);
         }
 
-        private async Task<string> SaveCoverImageAsync(IFormFile imageFile)
-        {
-            if (imageFile == null || imageFile.Length == 0)
-            {
-                return null;
-            }
 
-            var allowedImageExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".tiff", ".tif", ".heic", ".heif" };
-            var extension = Path.GetExtension(imageFile.FileName).ToLowerInvariant();
-
-            if (!allowedImageExtensions.Contains(extension))
-            {
-                Console.WriteLine($"Invalid cover image extension: {extension}");
-                return "INVALID_TYPE";
-            }
-
-            var coversDirectory = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "ImageCovers");
-            if (!Directory.Exists(coversDirectory))
-            {
-                Directory.CreateDirectory(coversDirectory);
-            }
-
-            var fileName = $"{Guid.NewGuid()}_{Path.GetFileName(imageFile.FileName)}";
-            var filePath = Path.Combine(coversDirectory, fileName);
-
-            using (var stream = new FileStream(filePath, FileMode.Create))
-            {
-                await imageFile.CopyToAsync(stream);
-            }
-
-            return $"ImageCovers/{fileName}";
-        }
 
         [HttpGet("related-by-tags")]
         public async Task<IActionResult> GetRelatedDocumentsByTags([FromQuery] List<string> tagNames, [FromQuery] int excludeDocumentId, [FromQuery] int limit = 5)
