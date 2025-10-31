@@ -65,7 +65,7 @@ namespace DocumentSharingAPI.Controllers
                     d.UploadedAt,
                     d.DownloadCount,
                     d.FileType,
-                    d.PointsRequired,
+                    d.IsVipOnly,
                     d.IsApproved,
                     d.IsLock,
                     d.UploadedBy,
@@ -87,7 +87,6 @@ namespace DocumentSharingAPI.Controllers
             }
 
             var user = await _userRepository.GetByIdAsync(document.UploadedBy);
-            var school = user != null ? await _context.Schools.FindAsync(user.SchoolId) : null;
 
             return Ok(new
             {
@@ -106,12 +105,11 @@ namespace DocumentSharingAPI.Controllers
                 Email = user?.Email ?? "Ẩn danh",
                 document.UploadedAt,
                 document.DownloadCount,
-                document.PointsRequired,
+                document.IsVipOnly,
                 document.IsApproved,
                 document.IsLock,
                 document.Comments,
-                document.UserDocuments,
-                School = school != null ? new { school.SchoolId, school.Name, school.LogoUrl } : null
+                document.UserDocuments
             });
         }
 
@@ -142,7 +140,7 @@ namespace DocumentSharingAPI.Controllers
                 CategoryId = model.CategoryId,
                 UploadedBy = model.UploadedBy,
                 UploadedAt = DateTime.Now,
-                PointsRequired = model.PointsRequired,
+                IsVipOnly = model.IsVipOnly,
                 IsApproved = false,
                 IsLock = false
             };
@@ -181,7 +179,7 @@ namespace DocumentSharingAPI.Controllers
             document.Title = model.Title ?? document.Title;
             document.Description = model.Description ?? document.Description;
             document.CategoryId = model.CategoryId != 0 ? model.CategoryId : document.CategoryId;
-            document.PointsRequired = model.PointsRequired != 0 ? model.PointsRequired : document.PointsRequired;
+            document.IsVipOnly = model.IsVipOnly;
 
             if (model.CoverImage != null && model.CoverImage.Length > 0)
             {
@@ -344,20 +342,6 @@ namespace DocumentSharingAPI.Controllers
                 return BadRequest("Không có file được tải lên.");
             }
 
-            // Kiểm tra SchoolId
-            if (model.SchoolId == 0)
-            {
-                Console.WriteLine("SchoolId is missing or invalid.");
-                return BadRequest("Trường học không được để trống.");
-            }
-
-            var school = await _context.Schools.FindAsync(model.SchoolId);
-            if (school == null)
-            {
-                Console.WriteLine($"Invalid school ID: {model.SchoolId}");
-                return BadRequest("Trường học không hợp lệ.");
-            }
-
             var category = await _categoryRepository.GetByIdAsync(model.CategoryId);
             if (category == null)
             {
@@ -370,13 +354,6 @@ namespace DocumentSharingAPI.Controllers
             {
                 Console.WriteLine($"Invalid user ID: {model.UploadedBy}");
                 return BadRequest("Người dùng không hợp lệ.");
-            }
-
-            // Kiểm tra user có SchoolId khớp với model.SchoolId
-            if (user.SchoolId != model.SchoolId)
-            {
-                Console.WriteLine($"User's SchoolId ({user.SchoolId}) does not match provided SchoolId ({model.SchoolId}).");
-                return BadRequest("Trường học không khớp với thông tin người dùng.");
             }
 
             var existingDocument = await _documentRepository.GetByTitleAsync(model.Title);
@@ -426,10 +403,10 @@ namespace DocumentSharingAPI.Controllers
                 CategoryId = model.CategoryId,
                 UploadedBy = model.UploadedBy,
                 UploadedAt = DateTime.Now,
-                PointsRequired = model.PointsRequired,
+                IsVipOnly = model.IsVipOnly,
                 IsApproved = false,
                 IsLock = false,
-                SchoolId = model.SchoolId
+                ApprovalPriority = user.IsVip && user.VipExpiryDate > DateTime.Now ? 1 : 0 // VIP user có độ ưu tiên cao hơn
             };
             await _documentRepository.AddAsync(document);
             Console.WriteLine($"Document created with ID: {document.DocumentId}");
@@ -461,7 +438,11 @@ namespace DocumentSharingAPI.Controllers
             };
             await _userDocumentRepository.AddAsync(userDocument);
 
-            await _userRepository.UpdatePointsAsync(model.UploadedBy, 10);
+            // Thưởng cho tài khoản thường: 1 lượt tải VIP khi upload tài liệu được duyệt
+            if (!user.IsVip || user.VipExpiryDate <= DateTime.Now)
+            {
+                await _userRepository.AddVipBonusDownloadAsync(model.UploadedBy);
+            }
 
             var uploadCount = await _context.Documents.CountAsync(d => d.UploadedBy == model.UploadedBy);
             if (uploadCount >= 5)
@@ -521,7 +502,6 @@ namespace DocumentSharingAPI.Controllers
                 foreach (var d in documents)
                 {
                     var user = await _userRepository.GetByIdAsync(d.UploadedBy);
-                    var school = user != null ? await _context.Schools.FindAsync(user.SchoolId) : null;
                     result.Add(new
                     {
                         d.DocumentId,
@@ -538,12 +518,11 @@ namespace DocumentSharingAPI.Controllers
                         Email = user?.Email ?? "Không xác định",
                         d.UploadedAt,
                         d.DownloadCount,
-                        d.PointsRequired,
+                        d.IsVipOnly,
                         d.IsApproved,
                         d.IsLock,
                         d.Comments,
-                        d.UserDocuments,
-                        School = school != null ? new { school.SchoolId, school.Name, school.LogoUrl } : null
+                        d.UserDocuments
                     });
                 }
 
@@ -653,7 +632,7 @@ namespace DocumentSharingAPI.Controllers
                         d.FileSize,
                         d.UploadedAt,
                         d.DownloadCount,
-                        d.PointsRequired,
+                        d.IsVipOnly,
                         d.IsApproved,
                         d.IsLock
                     })
@@ -693,10 +672,30 @@ namespace DocumentSharingAPI.Controllers
                 if (user == null)
                     return BadRequest(new { message = "Người dùng không tồn tại." });
 
-                if (user.Points < document.PointsRequired)
-                    return BadRequest(new { message = $"Không đủ điểm để tải tài liệu. Cần {document.PointsRequired} điểm, bạn hiện có {user.Points} điểm." });
+                // Kiểm tra quyền tải theo hệ thống VIP mới
+                bool canDownload = await _userRepository.CanDownloadAsync(userId, document.IsVipOnly);
+                if (!canDownload)
+                {
+                    if (document.IsVipOnly)
+                    {
+                        return BadRequest(new { message = "Bạn không thể tải tài liệu VIP này. Vui lòng nâng cấp tài khoản VIP hoặc sử dụng lượt tải VIP bonus." });
+                    }
+                    else
+                    {
+                        return BadRequest(new { message = "Bạn đã hết lượt tải hôm nay. Vui lòng nâng cấp VIP để có thêm lượt tải." });
+                    }
+                }
 
-                await _userRepository.UpdatePointsAsync(userId, -document.PointsRequired);
+                // Cập nhật số lượt download đã sử dụng
+                await _userRepository.UpdateDownloadCountsAsync(userId, document.IsVipOnly);
+
+                // Nếu là tài liệu VIP và dùng bonus download, trừ bonus
+                if (document.IsVipOnly && (!user.IsVip || user.VipExpiryDate <= DateTime.Now))
+                {
+                    user.VipBonusDownloads--;
+                    await _userRepository.UpdateAsync(user);
+                }
+
                 await _documentRepository.IncrementDownloadCountAsync(id);
 
                 var userDocument = await _userDocumentRepository.GetByUserIdDocumentIdAndActionAsync(userId, id, "Download");
@@ -990,7 +989,7 @@ namespace DocumentSharingAPI.Controllers
         public string? CoverImageUrl { get; set; }
         public int CategoryId { get; set; }
         public int UploadedBy { get; set; }
-        public int PointsRequired { get; set; }
+        public bool IsVipOnly { get; set; }
     }
 
     public class UploadDocumentModel
@@ -1002,9 +1001,7 @@ namespace DocumentSharingAPI.Controllers
         public int CategoryId { get; set; }
         [Required(ErrorMessage = "Người tải lên không được để trống")]
         public int UploadedBy { get; set; }
-        public int PointsRequired { get; set; }
-        [Required(ErrorMessage = "Trường học không được để trống")]
-        public int SchoolId { get; set; }
+        public bool IsVipOnly { get; set; } = false; // Tài liệu VIP hay thường
         public IFormFile File { get; set; }
         public IFormFile? CoverImage { get; set; }
         public List<string>? Tags { get; set; }
