@@ -14,7 +14,18 @@ namespace DocumentSharingAPI.Repositories
         Task<IEnumerable<UserRankingItemDto>> GetTopUsersByUploadsAsync(int limit);
         Task<IEnumerable<UserRankingItemDto>> GetTopUsersByCommentsAsync(int limit);
         Task<IEnumerable<UserRankingItemDto>> GetTopUsersByDocumentDownloadsAsync(int limit);
+<<<<<<< Updated upstream
         Task<User> GetTopCommenterAsync(); // Thêm phương thức
         Task<User> GetTopPointsUserAsync();
+=======
+        Task<User> GetTopCommenterAsync();
+        
+        // VIP System methods
+        Task ResetDailyDownloadsAsync();
+        Task UpdateDownloadCountsAsync(int userId, bool isVipDownload);
+        Task<bool> CanDownloadAsync(int userId, bool isVipDocument);
+        Task AddVipBonusDownloadAsync(int userId);
+        Task AddBonusDownloadAsync(int userId, bool isVipBonus);
+>>>>>>> Stashed changes
     }
 }
