@@ -139,16 +139,6 @@ namespace DocumentSharingAPI.Repositories
 
         public async Task<(IEnumerable<Document>, int)> GetPagedAsync(int page, int pageSize, string keyword, int? categoryId, string fileType, string sortBy, List<string> tagNames = null, int? schoolId = null)
         {
-            // Kiểm tra SchoolId hợp lệ sớm
-            if (schoolId.HasValue && schoolId.Value > 0)
-            {
-                var schoolExists = await _context.Schools.AnyAsync(s => s.SchoolId == schoolId.Value);
-                if (!schoolExists)
-                {
-                    Console.WriteLine($"SchoolId {schoolId.Value} does not exist.");
-                    return (new List<Document>(), 0);
-                }
-            }
 
             var query = _context.Documents
                 .Include(d => d.DocumentTags)
@@ -169,10 +159,6 @@ namespace DocumentSharingAPI.Repositories
             // Lọc theo loại file
             if (!string.IsNullOrEmpty(fileType))
                 query = query.Where(d => d.FileType == fileType);
-
-            // Lọc theo trường học
-            if (schoolId.HasValue && schoolId.Value > 0)
-                query = query.Where(d => d.SchoolId == schoolId.Value);
 
             // Lọc theo tags
             if (tagNames != null && tagNames.Any())

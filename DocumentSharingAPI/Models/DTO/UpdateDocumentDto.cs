@@ -14,9 +14,7 @@ namespace DocumentSharingAPI.Models.DTO
         [Range(1, int.MaxValue, ErrorMessage = "Vui lòng chọn danh mục hợp lệ")]
         public int CategoryId { get; set; }
 
-        [Range(0, int.MaxValue, ErrorMessage = "Điểm yêu cầu phải là số không âm")]
-        public int PointsRequired { get; set; }
-        public int SchoolId { get; set; }
+        public bool IsVipOnly { get; set; }
         public IFormFile? File { get; set; }
         public IFormFile? CoverImage { get; set; }
         public List<string>? Tags { get; set; }

@@ -72,7 +72,7 @@ namespace DocumentSharingAPI.Controllers
                 FirebaseUid = model.FirebaseUid,
                 Email = model.Email,
                 FullName = model.FullName,
-                Points = 0,
+                IsVip = false,
                 IsAdmin = false,
                 IsLocked = false,
                 AvatarUrl = "/avatars/defaultavatar.png", // Đặt ảnh mặc định
@@ -110,7 +110,8 @@ namespace DocumentSharingAPI.Controllers
                     Email = user.Email,
                     FullName = user.FullName,
                     CheckAdmin = user.IsAdmin,
-                    Points = user.Points
+                    IsVip = user.IsVip,
+                    VipExpiryDate = user.VipExpiryDate
                 }
             });
         }
@@ -125,10 +126,8 @@ namespace DocumentSharingAPI.Controllers
                 u.Email,
                 u.FullName,
                 u.AvatarUrl,
-                u.SchoolId,
-                SchoolName = u.School?.Name, // Thêm thông tin trường
-                u.Points,
-                u.Level,
+                u.IsVip,
+                u.VipExpiryDate,
                 u.IsAdmin,
                 u.IsLocked,
                 u.CreatedAt,
@@ -156,10 +155,8 @@ namespace DocumentSharingAPI.Controllers
                 user.Email,
                 user.FullName,
                 user.AvatarUrl,
-                user.SchoolId,
-                SchoolName = user.School?.Name, // Thêm thông tin trường
-                user.Points,
-                user.Level,
+                user.IsVip,
+                user.VipExpiryDate,
                 user.IsAdmin,
                 user.IsLocked,
                 user.CreatedAt,
@@ -174,12 +171,7 @@ namespace DocumentSharingAPI.Controllers
             if (user == null)
                 return NotFound();
 
-            var school = await _context.Schools.FindAsync(model.SchoolId);
-            if (school == null)
-                return BadRequest("Trường học không hợp lệ.");
-
             user.FullName = model.FullName ?? user.FullName;
-            user.SchoolId = model.SchoolId; // Cập nhật SchoolId
             user.AvatarUrl = model.AvatarUrl ?? user.AvatarUrl;
 
             await _userRepository.UpdateAsync(user);
@@ -234,14 +226,14 @@ namespace DocumentSharingAPI.Controllers
         }
 
         [HttpPost("{id}/points")]
-        public async Task<IActionResult> AddPoints(int id, [FromBody] PointsModel model)
+        public async Task<IActionResult> AddPoints(int id, [FromBody] VipStatusModel model)
         {
             var user = await _userRepository.GetByIdAsync(id);
             if (user == null)
                 return NotFound();
 
-            await _userRepository.UpdatePointsAsync(id, model.Points);
-            return Ok(new { Message = "Points updated", Points = user.Points, Level = user.Level });
+            // Points system removed - VIP system used instead
+            return Ok(new { Message = "VIP system is now used instead of points", IsVip = user.IsVip, VipExpiryDate = user.VipExpiryDate });
         }
 
         [HttpPost("{id}/avatar")]
@@ -291,12 +283,19 @@ namespace DocumentSharingAPI.Controllers
         [HttpGet("ranking")]
         public async Task<IActionResult> GetRanking([FromQuery] int limit = 10)
         {
-            var users = await _userRepository.GetTopUsersAsync(limit);
-            return Ok(users.Select(u => new
+            // Points system removed - show VIP users instead
+            var users = await _userRepository.GetAllAsync();
+            var topUsers = users.Where(u => u.IsVip || (u.UploadedDocuments?.Count ?? 0) > 0)
+                               .OrderByDescending(u => u.IsVip)
+                               .ThenByDescending(u => u.UploadedDocuments?.Count ?? 0)
+                               .Take(limit);
+            
+            return Ok(topUsers.Select(u => new
             {
                 u.UserId,
                 u.FullName,
-                u.Points,
+                IsVip = u.IsVip,
+                VipStatus = u.IsVip ? "VIP" : "Regular",
                 DocumentsUploaded = u.UploadedDocuments?.Count ?? 0
             }));
         }
@@ -304,8 +303,8 @@ namespace DocumentSharingAPI.Controllers
         [HttpGet("rankings/points")]
         public async Task<IActionResult> GetRankingsByPoints([FromQuery] int limit = 10)
         {
-            var users = await _userRepository.GetTopUsersByPointsAsync(limit);
-            return Ok(users);
+            // Points system deprecated - redirect to VIP rankings
+            return await GetRanking(limit);
         }
 
         [HttpGet("rankings/uploads")]
@@ -355,23 +354,28 @@ namespace DocumentSharingAPI.Controllers
 
         }
 
-        // Thêm endpoint mới: Người có nhiều điểm nhất
-        [HttpGet("top-points")]
-        public async Task<IActionResult> GetTopPointsUser()
+        // Top VIP user instead of points
+        [HttpGet("top-vip")]
+        public async Task<IActionResult> GetTopVipUser()
         {
             try
             {
-                var topUser = await _userRepository.GetTopPointsUserAsync();
-                if (topUser == null)
-                    return NotFound("Không có người dùng nào có điểm.");
+                var users = await _userRepository.GetAllAsync();
+                var topVipUser = users.Where(u => u.IsVip && u.VipExpiryDate > DateTime.Now)
+                                     .OrderByDescending(u => u.VipExpiryDate)
+                                     .FirstOrDefault();
+                                     
+                if (topVipUser == null)
+                    return NotFound("Không có người dùng VIP nào.");
 
                 return Ok(new
                 {
-                    topUser.UserId,
-                    topUser.FullName,
-                    topUser.Email,
-                    topUser.AvatarUrl, // Đảm bảo trả về AvatarUrl
-                    topUser.Points
+                    topVipUser.UserId,
+                    topVipUser.FullName,
+                    topVipUser.Email,
+                    topVipUser.AvatarUrl,
+                    VipStatus = "VIP",
+                    topVipUser.VipExpiryDate
                 });
             }
             catch (Exception ex)
@@ -397,13 +401,12 @@ namespace DocumentSharingAPI.Controllers
     public class UpdateUserModel
     {
         public string? FullName { get; set; }
-        public int SchoolId { get; set; }
         public string? AvatarUrl { get; set; }
     }
 
-    public class PointsModel
+    public class VipStatusModel
     {
-        public int Points { get; set; }
+        public bool IsVip { get; set; }
     }
 
     public class LockUserModel
