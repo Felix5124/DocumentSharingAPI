@@ -437,13 +437,9 @@ namespace DocumentSharingAPI.Controllers
                 AddedAt = DateTime.Now
             };
             await _userDocumentRepository.AddAsync(userDocument);
-
-            // Thưởng cho tài khoản thường: 1 lượt tải VIP khi upload tài liệu được duyệt
-            if (!user.IsVip || user.VipExpiryDate <= DateTime.Now)
-            {
-                await _userRepository.AddVipBonusDownloadAsync(model.UploadedBy);
-            }
-
+            // Thưởng cho mọi tài khoản: 1 lượt tải bonus khi upload tài liệu được duyệt
+            // Cho phép người dùng chọn loại bonus download (VIP hoặc thường)
+            await _userRepository.AddBonusDownloadAsync(model.UploadedBy, model.PreferVipBonus);
             var uploadCount = await _context.Documents.CountAsync(d => d.UploadedBy == model.UploadedBy);
             if (uploadCount >= 5)
             {
@@ -671,31 +667,22 @@ namespace DocumentSharingAPI.Controllers
                 var user = await _userRepository.GetByIdAsync(userId);
                 if (user == null)
                     return BadRequest(new { message = "Người dùng không tồn tại." });
-
                 // Kiểm tra quyền tải theo hệ thống VIP mới
                 bool canDownload = await _userRepository.CanDownloadAsync(userId, document.IsVipOnly);
                 if (!canDownload)
                 {
                     if (document.IsVipOnly)
                     {
-                        return BadRequest(new { message = "Bạn không thể tải tài liệu VIP này. Vui lòng nâng cấp tài khoản VIP hoặc sử dụng lượt tải VIP bonus." });
+                        return BadRequest(new { message = "Bạn không thể tải tài liệu VIP này. Vui lòng nâng cấp tài khoản VIP hoặc sử dụng lượt tải VIP bonus từ việc upload tài liệu." });
                     }
                     else
                     {
-                        return BadRequest(new { message = "Bạn đã hết lượt tải hôm nay. Vui lòng nâng cấp VIP để có thêm lượt tải." });
+                        return BadRequest(new { message = "Bạn đã hết lượt tải tài liệu thường hôm nay (2 lượt/ngày cho tài khoản thường). Vui lòng nâng cấp VIP để có 10 lượt/ngày hoặc upload tài liệu để nhận bonus download." });
                     }
                 }
 
-                // Cập nhật số lượt download đã sử dụng
+                // Cập nhật số lượt download đã sử dụng (bao gồm cả việc trừ bonus downloads nếu cần)
                 await _userRepository.UpdateDownloadCountsAsync(userId, document.IsVipOnly);
-
-                // Nếu là tài liệu VIP và dùng bonus download, trừ bonus
-                if (document.IsVipOnly && (!user.IsVip || user.VipExpiryDate <= DateTime.Now))
-                {
-                    user.VipBonusDownloads--;
-                    await _userRepository.UpdateAsync(user);
-                }
-
                 await _documentRepository.IncrementDownloadCountAsync(id);
 
                 var userDocument = await _userDocumentRepository.GetByUserIdDocumentIdAndActionAsync(userId, id, "Download");
@@ -1002,6 +989,7 @@ namespace DocumentSharingAPI.Controllers
         [Required(ErrorMessage = "Người tải lên không được để trống")]
         public int UploadedBy { get; set; }
         public bool IsVipOnly { get; set; } = false; // Tài liệu VIP hay thường
+        public bool PreferVipBonus { get; set; } = false; // Người dùng muốn nhận VIP bonus download thay vì regular bonus
         public IFormFile File { get; set; }
         public IFormFile? CoverImage { get; set; }
         public List<string>? Tags { get; set; }
