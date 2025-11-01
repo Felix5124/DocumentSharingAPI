@@ -18,5 +18,6 @@ namespace DocumentSharingAPI.Repositories
         Task UpdateDownloadCountsAsync(int userId, bool isVipDownload);
         Task<bool> CanDownloadAsync(int userId, bool isVipDocument);
         Task AddVipBonusDownloadAsync(int userId);
+        Task AddBonusDownloadAsync(int userId, bool isVipBonus);
     }
 }

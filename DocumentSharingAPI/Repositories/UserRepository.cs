@@ -191,11 +191,27 @@ namespace DocumentSharingAPI.Repositories
             {
                 if (isVipDownload)
                 {
-                    user.VipDownloadsUsedToday++;
+                    // Tài liệu VIP: ưu tiên dùng quota VIP nếu là VIP user, nếu không thì dùng bonus
+                    if (user.IsVip && user.VipExpiryDate > DateTime.Now)
+                    {
+                        user.VipDownloadsUsedToday++;
+                    }
+                    else if (user.VipBonusDownloads > 0)
+                    {
+                        user.VipBonusDownloads--;
+                    }
                 }
                 else
                 {
-                    user.RegularDownloadsUsedToday++;
+                    // Tài liệu thường: ưu tiên dùng quota thường, sau đó mới dùng bonus
+                    if ((user.IsVip && user.VipExpiryDate > DateTime.Now) || user.RegularDownloadsUsedToday < 2)
+                    {
+                        user.RegularDownloadsUsedToday++;
+                    }
+                    else if (user.RegularBonusDownloads > 0)
+                    {
+                        user.RegularBonusDownloads--;
+                    }
                 }
                 await UpdateAsync(user);
             }
@@ -217,14 +233,14 @@ namespace DocumentSharingAPI.Repositories
 
             if (isVipDocument)
             {
-                // Tài liệu VIP chỉ VIP user hoặc có bonus downloads mới tải được
+                // Tài liệu VIP chỉ VIP user hoặc có bonus downloads VIP mới tải được
                 if (user.IsVip && user.VipExpiryDate > DateTime.Now)
                 {
-                    return user.VipDownloadsUsedToday < 5;
+                    return user.VipDownloadsUsedToday < 10; // VIP: 10 lượt tải VIP/ngày
                 }
                 else
                 {
-                    return user.VipBonusDownloads > 0;
+                    return user.VipBonusDownloads > 0; // Thường: cần có bonus download VIP
                 }
             }
             else
@@ -232,11 +248,12 @@ namespace DocumentSharingAPI.Repositories
                 // Tài liệu thường
                 if (user.IsVip && user.VipExpiryDate > DateTime.Now)
                 {
-                    return user.RegularDownloadsUsedToday < 5;
+                    return user.RegularDownloadsUsedToday < 10; // VIP: 10 lượt tải thường/ngày
                 }
                 else
                 {
-                    return user.RegularDownloadsUsedToday < 1;
+                    // Tài khoản thường: 2 lượt cơ bản + bonus downloads thường
+                    return (user.RegularDownloadsUsedToday < 2) || (user.RegularBonusDownloads > 0);
                 }
             }
         }
@@ -247,6 +264,23 @@ namespace DocumentSharingAPI.Repositories
             if (user != null)
             {
                 user.VipBonusDownloads++;
+                await UpdateAsync(user);
+            }
+        }
+
+        public async Task AddBonusDownloadAsync(int userId, bool isVipBonus)
+        {
+            var user = await GetByIdAsync(userId);
+            if (user != null)
+            {
+                if (isVipBonus)
+                {
+                    user.VipBonusDownloads++;
+                }
+                else
+                {
+                    user.RegularBonusDownloads++;
+                }
                 await UpdateAsync(user);
             }
         }

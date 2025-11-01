@@ -23,7 +23,8 @@ namespace DocumentSharingAPI.Models
         public DateTime? VipExpiryDate { get; set; }
         public int VipDownloadsUsedToday { get; set; } = 0;
         public int RegularDownloadsUsedToday { get; set; } = 0;
-        public int VipBonusDownloads { get; set; } = 0; // Bonus downloads từ việc upload tài liệu
+        public int VipBonusDownloads { get; set; } = 0; // Bonus downloads VIP từ việc upload tài liệu
+        public int RegularBonusDownloads { get; set; } = 0; // Bonus downloads thường từ việc upload tài liệu
         public DateTime LastDownloadResetDate { get; set; } = DateTime.Today;
 
         // Quan hệ
