@@ -512,6 +512,7 @@ namespace DocumentSharingAPI.Controllers
                         d.Category,
                         d.UploadedBy,
                         Email = user?.Email ?? "Không xác định",
+                        FullName = user?.FullName ?? "Ẩn danh",
                         d.UploadedAt,
                         d.DownloadCount,
                         d.IsVipOnly,
