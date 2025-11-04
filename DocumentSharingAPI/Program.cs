@@ -14,7 +14,7 @@ using DocumentSharingAPI.Services;
 var builder = WebApplication.CreateBuilder(args);
 
 // Configure Kestrel to use specific URLs
-builder.WebHost.UseUrls("https://localhost:7013", "http://localhost:5178");
+builder.WebHost.UseUrls("https://localhost:7013");
 
 // Configure logging
 builder.Logging.ClearProviders();
