@@ -2,6 +2,8 @@
 using DocumentSharingAPI.Repositories;
 using Microsoft.AspNetCore.Mvc;
 using System.Threading.Tasks;
+using System;
+using System.Linq;
 
 namespace DocumentSharingAPI.Controllers
 {
@@ -11,18 +13,56 @@ namespace DocumentSharingAPI.Controllers
     {
         private readonly IPostRepository _postRepository;
         private readonly AppDbContext _context;
+        private readonly IBlobService _blob;
 
-        public PostsController(IPostRepository postRepository, AppDbContext context)
+        public PostsController(IPostRepository postRepository, AppDbContext context, IBlobService blob)
         {
             _postRepository = postRepository;
             _context = context;
+            _blob = blob;
+        }
+
+        private string NormalizeAvatar(string? avatar)
+        {
+            if (string.IsNullOrWhiteSpace(avatar)) return "default-avatar.png";
+            return avatar.StartsWith("avatars/", StringComparison.OrdinalIgnoreCase)
+                ? avatar.Substring("avatars/".Length)
+                : avatar;
         }
 
         [HttpGet]
         public async Task<IActionResult> GetAll()
         {
             var posts = await _postRepository.GetAllWithCommentsAsync();
-            return Ok(posts);
+            var dtos = posts.Select(p => new
+            {
+                p.PostId,
+                p.Title,
+                p.Content,
+                p.CreatedAt,
+                p.UserId,
+                User = p.User == null ? null : new
+                {
+                    p.User.Email,
+                    p.User.FullName,
+                    AvatarUrl = _blob.GetReadSasUrl("avatars", NormalizeAvatar(p.User.AvatarUrl), TimeSpan.FromHours(1))
+                },
+                Comments = p.Comments?.Select(c => new
+                {
+                    c.PostCommentId,
+                    c.PostId,
+                    c.Content,
+                    c.CreatedAt,
+                    c.UserId,
+                    User = c.User == null ? null : new
+                    {
+                        c.User.Email,
+                        c.User.FullName,
+                        AvatarUrl = _blob.GetReadSasUrl("avatars", NormalizeAvatar(c.User.AvatarUrl), TimeSpan.FromHours(1))
+                    }
+                }).ToList()
+            });
+            return Ok(dtos);
         }
 
         [HttpGet("{id}")]
@@ -31,7 +71,21 @@ namespace DocumentSharingAPI.Controllers
             var post = await _postRepository.GetByIdAsync(id);
             if (post == null)
                 return NotFound();
-            return Ok(post);
+            var dto = new
+            {
+                post.PostId,
+                post.Title,
+                post.Content,
+                post.CreatedAt,
+                post.UserId,
+                User = post.User == null ? null : new
+                {
+                    post.User.Email,
+                    post.User.FullName,
+                    AvatarUrl = _blob.GetReadSasUrl("avatars", NormalizeAvatar(post.User.AvatarUrl), TimeSpan.FromHours(1))
+                }
+            };
+            return Ok(dto);
         }
 
         [HttpPost]
@@ -54,7 +108,22 @@ namespace DocumentSharingAPI.Controllers
                 CreatedAt = DateTime.Now
             };
             await _postRepository.AddAsync(post);
-            return CreatedAtAction(nameof(GetById), new { id = post.PostId }, post);
+            var createdUser = await _context.Users.FindAsync(post.UserId);
+            var result = new
+            {
+                post.PostId,
+                post.Title,
+                post.Content,
+                post.CreatedAt,
+                post.UserId,
+                User = createdUser == null ? null : new
+                {
+                    createdUser.Email,
+                    createdUser.FullName,
+                    AvatarUrl = _blob.GetReadSasUrl("avatars", NormalizeAvatar(createdUser.AvatarUrl), TimeSpan.FromHours(1))
+                }
+            };
+            return CreatedAtAction(nameof(GetById), new { id = post.PostId }, result);
         }
 
         [HttpDelete("{id}")]
@@ -71,8 +140,8 @@ namespace DocumentSharingAPI.Controllers
 
     public class PostModel
     {
-        public string Title { get; set; }
-        public string Content { get; set; }
+        public string Title { get; set; } = string.Empty;
+        public string Content { get; set; } = string.Empty;
         public int? UserId { get; set; } // UserId bắt buộc từ body
     }
 }
