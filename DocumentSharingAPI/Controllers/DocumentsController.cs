@@ -224,7 +224,11 @@ namespace DocumentSharingAPI.Controllers
                 // Xóa file cũ trên Azure Blob
                 if (!string.IsNullOrEmpty(document.FileUrl))
                 {
-                    await _blob.DeleteAsync("documents", document.FileUrl);
+                    // Remove prefix "documents/" if present để tránh double path
+                    var blobPathToDelete = document.FileUrl.StartsWith("documents/") 
+                        ? document.FileUrl.Substring("documents/".Length) 
+                        : document.FileUrl;
+                    await _blob.DeleteAsync("documents", blobPathToDelete);
                     Console.WriteLine($"Deleted old blob: {document.FileUrl}");
                 }
 
@@ -232,7 +236,10 @@ namespace DocumentSharingAPI.Controllers
                 var newGuid = Guid.NewGuid().ToString("N");
                 var newBlobName = $"documents/{newGuid}/{Path.GetFileName(model.File.FileName)}";
                 await using var fileStream = model.File.OpenReadStream();
-                await _blob.UploadAsync("documents", newBlobName, fileStream, model.File.ContentType);
+                
+                // Ensure correct MIME type for the updated file
+                var correctMimeType = GetMimeTypeByExtension(extension);
+                await _blob.UploadAsync("documents", newBlobName, fileStream, correctMimeType);
 
                 document.FileUrl = newBlobName;
                 document.FileType = extension.TrimStart('.');
@@ -299,7 +306,11 @@ namespace DocumentSharingAPI.Controllers
                 // Xóa file tài liệu trên Azure Blob
                 if (!string.IsNullOrEmpty(document.FileUrl))
                 {
-                    await _blob.DeleteAsync("documents", document.FileUrl);
+                    // Remove prefix "documents/" if present để tránh double path
+                    var blobPathToDelete = document.FileUrl.StartsWith("documents/") 
+                        ? document.FileUrl.Substring("documents/".Length) 
+                        : document.FileUrl;
+                    await _blob.DeleteAsync("documents", blobPathToDelete);
                     Console.WriteLine($"Deleted document blob: {document.FileUrl}");
                 }
 
@@ -364,7 +375,10 @@ namespace DocumentSharingAPI.Controllers
             var fileGuid = Guid.NewGuid().ToString("N");
             await using var fileStream = model.File.OpenReadStream();
             var fileName = $"{fileGuid}/{Path.GetFileName(model.File.FileName)}";
-            await _blob.UploadAsync("documents", fileName, fileStream, model.File.ContentType);
+            
+            // Ensure correct MIME type based on extension
+            var correctMimeType = GetMimeTypeByExtension(extension);
+            await _blob.UploadAsync("documents", fileName, fileStream, correctMimeType);
             var blobName = $"documents/{fileName}";
 
 
@@ -703,7 +717,11 @@ namespace DocumentSharingAPI.Controllers
                 await _context.SaveChangesAsync();
 
                 // Tạo SAS URL cho download (có thể dùng cách này để redirect)
-                var sasUrl = _blob.GetReadSasUrl("documents", document.FileUrl, TimeSpan.FromMinutes(10));
+                // Loại bỏ prefix "documents/" nếu có để tránh duplicate path
+                var blobPath = document.FileUrl.StartsWith("documents/") 
+                    ? document.FileUrl.Substring("documents/".Length) 
+                    : document.FileUrl;
+                var sasUrl = _blob.GetReadSasUrl("documents", blobPath, TimeSpan.FromMinutes(10));
                 return Ok(new { url = sasUrl, fileName = $"{document.Title}.{document.FileType}" });
 
                 // Hoặc có thể stream file qua API (không khuyến khích cho file lớn)
@@ -747,7 +765,11 @@ namespace DocumentSharingAPI.Controllers
             try
             {
                 // Tạo SAS URL cho preview PDF
-                var sasUrl = _blob.GetReadSasUrl("documents", document.FileUrl, TimeSpan.FromMinutes(5));
+                // Loại bỏ prefix "documents/" nếu có để tránh duplicate path
+                var blobPath = document.FileUrl.StartsWith("documents/") 
+                    ? document.FileUrl.Substring("documents/".Length) 
+                    : document.FileUrl;
+                var sasUrl = _blob.GetReadSasUrl("documents", blobPath, TimeSpan.FromMinutes(5));
                 return Ok(new { url = sasUrl });
 
                 // Hoặc có thể stream file qua API
@@ -934,6 +956,18 @@ namespace DocumentSharingAPI.Controllers
             }).ToList();
 
             return Ok(result);
+        }
+
+        private string GetMimeTypeByExtension(string extension)
+        {
+            return extension.ToLowerInvariant() switch
+            {
+                ".pdf" => "application/pdf",
+                ".docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ".doc" => "application/msword",
+                ".txt" => "text/plain",
+                _ => "application/octet-stream"
+            };
         }
     }
 
