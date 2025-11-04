@@ -13,6 +13,9 @@ using DocumentSharingAPI.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Configure Kestrel to use specific URLs
+builder.WebHost.UseUrls("https://localhost:7013", "http://localhost:5178");
+
 // Configure logging
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
@@ -65,7 +68,7 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", corsBuilder =>
     {
-        corsBuilder.WithOrigins("http://localhost:5173")
+        corsBuilder.WithOrigins("http://localhost:5173", "https://localhost:5173")
                    .AllowAnyMethod()
                    .AllowAnyHeader()
                    .AllowCredentials();

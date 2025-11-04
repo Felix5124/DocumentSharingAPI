@@ -13,47 +13,59 @@ public interface IBlobService
 public class BlobService : IBlobService
 {
     private readonly BlobServiceClient _svc;
+
     public BlobService(IConfiguration cfg)
     {
         _svc = new BlobServiceClient(cfg["Storage:ConnectionString"]);
     }
 
-    // 1) Upload file lên container private
+    // Upload file lên container
     public async Task<string> UploadAsync(string container, string blobName, Stream file, string contentType)
     {
         var containerClient = _svc.GetBlobContainerClient(container);
         await containerClient.CreateIfNotExistsAsync();
+
         var client = containerClient.GetBlobClient(blobName);
 
-        var headers = new BlobHttpHeaders { ContentType = contentType };
-        await client.UploadAsync(file, new BlobUploadOptions { HttpHeaders = headers });
+        // Nếu blob đã tồn tại thì xóa trước (kèm snapshots)
+        await client.DeleteIfExistsAsync(DeleteSnapshotsOption.IncludeSnapshots);
 
-        // Trả về URI (không truy cập được nếu không có SAS hoặc stream qua API)
+        var headers = new BlobHttpHeaders { ContentType = contentType };
+        await client.UploadAsync(file, new BlobUploadOptions
+        {
+            HttpHeaders = headers
+            // Không có Overwrite ở đây, đừng cố thêm
+        });
+
         return client.Uri.ToString();
     }
 
-    // 2) Tải file (dành cho server stream về client)
+
+    // Download file từ blob
     public async Task<Stream> DownloadAsync(string container, string blobName)
     {
         var client = _svc.GetBlobContainerClient(container).GetBlobClient(blobName);
-        if (!await client.ExistsAsync()) throw new FileNotFoundException(blobName);
+        if (!await client.ExistsAsync())
+            throw new FileNotFoundException(blobName);
+
         var resp = await client.DownloadStreamingAsync();
-        return resp.Value.Content; // nhớ set Content-Type ở controller
+        return resp.Value.Content;
     }
 
-    // 3) Xóa file (kể cả snapshot)
+    // Xóa file
     public async Task DeleteAsync(string container, string blobName)
     {
         var client = _svc.GetBlobContainerClient(container).GetBlobClient(blobName);
         await client.DeleteIfExistsAsync(DeleteSnapshotsOption.IncludeSnapshots);
     }
 
-    // 4) Cấp link tải tạm (SAS) quyền READ, hết hạn sau ttl
+    // Tạo link SAS tạm thời cho quyền READ
     public string GetReadSasUrl(string container, string blobName, TimeSpan ttl)
     {
         var client = _svc.GetBlobContainerClient(container).GetBlobClient(blobName);
+
         if (!client.CanGenerateSasUri)
-            throw new InvalidOperationException("Storage credentials không hỗ trợ SAS. Hãy dùng connection string với account key.");
+            throw new InvalidOperationException("Storage credentials không hỗ trợ SAS. Hãy dùng connection string có account key.");
 
         var sas = new BlobSasBuilder
         {
