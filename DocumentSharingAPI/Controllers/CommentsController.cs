@@ -2,6 +2,7 @@
 using DocumentSharingAPI.Repositories;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System;
 using System.Linq;
 using System.Threading.Tasks;
 
@@ -14,12 +15,22 @@ namespace DocumentSharingAPI.Controllers
         private readonly ICommentRepository _commentRepository;
         private readonly IDocumentRepository _documentRepository;
         private readonly AppDbContext _context;
+        private readonly IBlobService _blob;
 
-        public CommentsController(ICommentRepository commentRepository, IDocumentRepository documentRepository, AppDbContext context)
+        public CommentsController(ICommentRepository commentRepository, IDocumentRepository documentRepository, AppDbContext context, IBlobService blob)
         {
             _commentRepository = commentRepository;
             _documentRepository = documentRepository;
             _context = context;
+            _blob = blob;
+        }
+
+        private string NormalizeAvatar(string? avatar)
+        {
+            if (string.IsNullOrWhiteSpace(avatar)) return "default-avatar.png";
+            return avatar.StartsWith("avatars/", StringComparison.OrdinalIgnoreCase)
+                ? avatar.Substring("avatars/".Length)
+                : avatar;
         }
 
         [HttpGet("document/{documentId}")]
@@ -38,7 +49,9 @@ namespace DocumentSharingAPI.Controllers
                 c.Rating,
                 c.CreatedAt,
                 c.UserId,
-                UserEmail = c.User?.Email ?? "Ẩn danh"
+                UserEmail = c.User?.Email ?? "Ẩn danh",
+                UserFullName = c.User?.FullName ?? "Ẩn danh",
+                AvatarUrl = _blob.GetReadSasUrl("avatars", NormalizeAvatar(c.User?.AvatarUrl), TimeSpan.FromHours(1))
             }).ToList();
             return Ok(commentDtos);
         }
@@ -108,7 +121,9 @@ namespace DocumentSharingAPI.Controllers
                 comment.Rating,
                 comment.CreatedAt,
                 comment.UserId,
-                UserEmail = user.Email
+                UserEmail = user.Email,
+                UserFullName = user.FullName,
+                AvatarUrl = _blob.GetReadSasUrl("avatars", NormalizeAvatar(user.AvatarUrl), TimeSpan.FromHours(1))
             });
         }
         [HttpGet("count")]
@@ -153,7 +168,7 @@ namespace DocumentSharingAPI.Controllers
     public class CommentModel
     {
         public int DocumentId { get; set; }
-        public string Content { get; set; }
+        public string Content { get; set; } = string.Empty;
         public int Rating { get; set; }
         public int UserId { get; set; } // Thêm UserId vào model
     }

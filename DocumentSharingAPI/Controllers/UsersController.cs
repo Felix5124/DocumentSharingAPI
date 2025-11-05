@@ -12,10 +12,24 @@ namespace DocumentSharingAPI.Controllers
     {
         private readonly IUserRepository _userRepository;
         private readonly AppDbContext _context;
-        public UsersController(IUserRepository userRepository, AppDbContext context)
+        private readonly IBlobService _blob;
+
+        public UsersController(IUserRepository userRepository, AppDbContext context, IBlobService blob)
         {
             _userRepository = userRepository;
             _context = context;
+            _blob = blob;
+        }
+
+        // Helper: chuẩn hóa tên file avatar (bỏ prefix “avatars/” nếu có)
+        private string NormalizeAvatar(string avatar)
+        {
+            if (string.IsNullOrEmpty(avatar))
+                return "default-avatar.png";
+
+            return avatar.StartsWith("avatars/", StringComparison.OrdinalIgnoreCase)
+                ? avatar.Substring("avatars/".Length)
+                : avatar;
         }
 
         [HttpPost("register")]
@@ -38,7 +52,7 @@ namespace DocumentSharingAPI.Controllers
                 Email = model.Email,
                 FullName = model.FullName,
                 FirebaseUid = firebaseUser.Uid,
-                AvatarUrl = "/avatars/defaultavatar.png", // Đặt ảnh mặc định
+                AvatarUrl = "default-avatar.png",
                 CreatedAt = DateTime.Now
             };
             await _userRepository.AddAsync(user);
@@ -51,21 +65,15 @@ namespace DocumentSharingAPI.Controllers
         public async Task<IActionResult> AuthProviderRegister([FromBody] AuthProviderRegisterModel model)
         {
             if (model == null || string.IsNullOrWhiteSpace(model.FirebaseUid) || string.IsNullOrWhiteSpace(model.Email))
-            {
                 return BadRequest("Thông tin đăng ký không hợp lệ.");
-            }
 
             var existingUserByUid = await _userRepository.GetByFirebaseUidAsync(model.FirebaseUid);
             if (existingUserByUid != null)
-            {
                 return Ok(existingUserByUid);
-            }
 
             var existingUserByEmail = await _userRepository.GetByEmailAsync(model.Email);
             if (existingUserByEmail != null)
-            {
                 return Conflict(new { message = "Email này đã được đăng ký trong hệ thống với một tài khoản khác." });
-            }
 
             var user = new User
             {
@@ -75,7 +83,7 @@ namespace DocumentSharingAPI.Controllers
                 IsVip = false,
                 IsAdmin = false,
                 IsLocked = false,
-                AvatarUrl = "/avatars/defaultavatar.png", // Đặt ảnh mặc định
+                AvatarUrl = "default-avatar.png",
                 CreatedAt = DateTime.UtcNow
             };
 
@@ -83,12 +91,10 @@ namespace DocumentSharingAPI.Controllers
 
             var createdUser = await _userRepository.GetByFirebaseUidAsync(user.FirebaseUid);
             if (createdUser == null)
-            {
                 return StatusCode(StatusCodes.Status500InternalServerError, "Không thể tạo người dùng mới trong cơ sở dữ liệu.");
-            }
+
             return Ok(createdUser);
         }
-
 
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] LoginModel model)
@@ -125,7 +131,7 @@ namespace DocumentSharingAPI.Controllers
                 u.UserId,
                 u.Email,
                 u.FullName,
-                u.AvatarUrl,
+                avatarUrl = _blob.GetReadSasUrl("avatars", NormalizeAvatar(u.AvatarUrl), TimeSpan.FromHours(1)),
                 u.IsVip,
                 u.VipExpiryDate,
                 u.IsAdmin,
@@ -139,8 +145,25 @@ namespace DocumentSharingAPI.Controllers
         public async Task<IActionResult> GetByUid(string uid)
         {
             var user = await _userRepository.GetByFirebaseUidAsync(uid);
-            if (user == null) return NotFound();
-            return Ok(user);
+            if (user == null)
+                return NotFound();
+
+            var avatarUrl = _blob.GetReadSasUrl("avatars", NormalizeAvatar(user.AvatarUrl), TimeSpan.FromHours(1));
+
+            return Ok(new
+            {
+                user.UserId,
+                user.Email,
+                user.FullName,
+                user.FirebaseUid,
+                avatarUrl,
+                user.IsVip,
+                user.VipExpiryDate,
+                user.IsAdmin,
+                user.IsLocked,
+                user.CreatedAt,
+                user.CommentCount
+            });
         }
 
         [HttpGet("{id}")]
@@ -149,12 +172,15 @@ namespace DocumentSharingAPI.Controllers
             var user = await _userRepository.GetByIdAsync(id);
             if (user == null)
                 return NotFound();
+
+            var avatarUrl = _blob.GetReadSasUrl("avatars", NormalizeAvatar(user.AvatarUrl), TimeSpan.FromHours(1));
+
             return Ok(new
             {
                 user.UserId,
                 user.Email,
                 user.FullName,
-                user.AvatarUrl,
+                avatarUrl,
                 user.IsVip,
                 user.VipExpiryDate,
                 user.IsAdmin,
@@ -185,55 +211,18 @@ namespace DocumentSharingAPI.Controllers
             if (user == null)
                 return NotFound();
 
+            if (!string.IsNullOrEmpty(user.AvatarUrl) &&
+                !user.AvatarUrl.Equals("default-avatar.png", StringComparison.OrdinalIgnoreCase))
+            {
+                await _blob.DeleteAsync("avatars", NormalizeAvatar(user.AvatarUrl));
+            }
+
             await _userRepository.DeleteAsync(id);
-            await FirebaseAuth.DefaultInstance.DeleteUserAsync(user.Email);
+
+            if (!string.IsNullOrEmpty(user.FirebaseUid))
+                await FirebaseAuth.DefaultInstance.DeleteUserAsync(user.FirebaseUid);
+
             return NoContent();
-        }
-
-        [HttpPut("{userId}/lock")]
-        public async Task<IActionResult> LockUnlockUser(int userId, [FromBody] LockUserModel model)
-        {
-            try
-            {
-                var user = await _userRepository.GetByIdAsync(userId);
-                if (user == null)
-                    return NotFound("User not found.");
-
-                if (user.IsAdmin)
-                    return BadRequest("Cannot lock/unlock an admin account.");
-
-                await _userRepository.UpdateLockStatusAsync(userId, model.IsLocked);
-
-                if (model.IsLocked)
-                {
-                    try
-                    {
-                        await FirebaseAuth.DefaultInstance.RevokeRefreshTokensAsync(user.FirebaseUid);
-                        Console.WriteLine($"Revoked tokens for user ID {userId} (Firebase UID: {user.FirebaseUid})");
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"Failed to revoke tokens for user ID {userId}: {ex.Message}");
-                    }
-                }
-
-                return Ok(new { message = $"Account has been {(model.IsLocked ? "locked" : "unlocked")} successfully." });
-            }
-            catch (Exception ex)
-            {
-                return BadRequest(new { message = $"Error while {(model.IsLocked ? "locking" : "unlocking")} account: {ex.Message}" });
-            }
-        }
-
-        [HttpPost("{id}/points")]
-        public async Task<IActionResult> AddPoints(int id, [FromBody] VipStatusModel model)
-        {
-            var user = await _userRepository.GetByIdAsync(id);
-            if (user == null)
-                return NotFound();
-
-            // Points system removed - VIP system used instead
-            return Ok(new { Message = "VIP system is now used instead of points", IsVip = user.IsVip, VipExpiryDate = user.VipExpiryDate });
         }
 
         [HttpPost("{id}/avatar")]
@@ -246,33 +235,29 @@ namespace DocumentSharingAPI.Controllers
                     return NotFound(new { message = "Người dùng không tồn tại." });
 
                 if (file == null || file.Length == 0)
-                    return BadRequest(new { message = "Không có file được tải lên." });
+                    return BadRequest(new { message = "Không có file tải lên." });
 
-                var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif" };
-                var extension = Path.GetExtension(file.FileName).ToLowerInvariant();
-                if (!allowedExtensions.Contains(extension))
-                    return BadRequest(new { message = "Định dạng file không được hỗ trợ. Chỉ hỗ trợ .jpg, .jpeg, .png, .gif." });
+                var allowed = new[] { ".jpg", ".jpeg", ".png", ".gif" };
+                var ext = Path.GetExtension(file.FileName).ToLowerInvariant();
+                if (!allowed.Contains(ext))
+                    return BadRequest(new { message = "Chỉ hỗ trợ .jpg, .jpeg, .png, .gif." });
 
-                var fileName = $"{id}_{DateTime.Now.Ticks}{extension}";
-                var uploadsFolder = Path.Combine(Directory.GetCurrentDirectory(), "wwwroot", "avatars");
-                var filePath = Path.Combine(uploadsFolder, fileName);
-
-                if (!Directory.Exists(uploadsFolder))
-                    Directory.CreateDirectory(uploadsFolder);
-
-                using (var stream = new FileStream(filePath, FileMode.Create))
+                // Xóa avatar cũ nếu không phải mặc định
+                if (!string.IsNullOrEmpty(user.AvatarUrl) &&
+                    !user.AvatarUrl.Equals("default-avatar.png", StringComparison.OrdinalIgnoreCase))
                 {
-                    await file.CopyToAsync(stream);
+                    await _blob.DeleteAsync("avatars", NormalizeAvatar(user.AvatarUrl));
                 }
 
-                user.AvatarUrl = $"/avatars/{fileName}";
+                var blobName = $"{id}_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}{ext}";
+                await using var s = file.OpenReadStream();
+                await _blob.UploadAsync("avatars", blobName, s, file.ContentType);
+
+                user.AvatarUrl = blobName;
                 await _userRepository.UpdateAsync(user);
 
-                return Ok(new
-                {
-                    message = "Tải avatar lên thành công.",
-                    avatarUrl = user.AvatarUrl
-                });
+                var sas = _blob.GetReadSasUrl("avatars", user.AvatarUrl, TimeSpan.FromMinutes(10));
+                return Ok(new { message = "OK", avatarUrl = sas, blob = user.AvatarUrl });
             }
             catch (Exception ex)
             {
@@ -283,13 +268,12 @@ namespace DocumentSharingAPI.Controllers
         [HttpGet("ranking")]
         public async Task<IActionResult> GetRanking([FromQuery] int limit = 10)
         {
-            // Points system removed - show VIP users instead
             var users = await _userRepository.GetAllAsync();
             var topUsers = users.Where(u => u.IsVip || (u.UploadedDocuments?.Count ?? 0) > 0)
                                .OrderByDescending(u => u.IsVip)
                                .ThenByDescending(u => u.UploadedDocuments?.Count ?? 0)
                                .Take(limit);
-            
+
             return Ok(topUsers.Select(u => new
             {
                 u.UserId,
@@ -300,50 +284,23 @@ namespace DocumentSharingAPI.Controllers
             }));
         }
 
-        [HttpGet("rankings/points")]
-        public async Task<IActionResult> GetRankingsByPoints([FromQuery] int limit = 10)
-        {
-            // Points system deprecated - redirect to VIP rankings
-            return await GetRanking(limit);
-        }
-
-        [HttpGet("rankings/uploads")]
-        public async Task<IActionResult> GetRankingsByUploads([FromQuery] int limit = 10)
-        {
-            var users = await _userRepository.GetTopUsersByUploadsAsync(limit);
-            return Ok(users);
-        }
-
-        [HttpGet("rankings/comments")]
-        public async Task<IActionResult> GetRankingsByComments([FromQuery] int limit = 10)
-        {
-            var users = await _userRepository.GetTopUsersByCommentsAsync(limit);
-            return Ok(users);
-        }
-
-        [HttpGet("rankings/document-downloads")]
-        public async Task<IActionResult> GetRankingsByDocumentDownloads([FromQuery] int limit = 10)
-        {
-            var users = await _userRepository.GetTopUsersByDocumentDownloadsAsync(limit);
-            return Ok(users);
-        }
-
-        // Thêm endpoint mới: Người có nhiều comment nhất
         [HttpGet("top-commenter")]
         public async Task<IActionResult> GetTopCommenter()
         {
             try
             {
-                var topCommenter = await _userRepository.GetTopCommenterAsync(); 
+                var topCommenter = await _userRepository.GetTopCommenterAsync();
                 if (topCommenter == null)
                     return NotFound("Không có người dùng nào có bình luận.");
+
+                var avatarUrl = _blob.GetReadSasUrl("avatars", NormalizeAvatar(topCommenter.AvatarUrl), TimeSpan.FromHours(1));
 
                 return Ok(new
                 {
                     topCommenter.UserId,
                     topCommenter.FullName,
                     topCommenter.Email,
-                    topCommenter.AvatarUrl, // Đảm bảo trả về AvatarUrl
+                    avatarUrl,
                     topCommenter.CommentCount
                 });
             }
@@ -351,10 +308,8 @@ namespace DocumentSharingAPI.Controllers
             {
                 return StatusCode(500, $"Internal server error: {ex.Message}");
             }
-
         }
 
-        // Top VIP user instead of points
         [HttpGet("top-vip")]
         public async Task<IActionResult> GetTopVipUser()
         {
@@ -364,16 +319,18 @@ namespace DocumentSharingAPI.Controllers
                 var topVipUser = users.Where(u => u.IsVip && u.VipExpiryDate > DateTime.Now)
                                      .OrderByDescending(u => u.VipExpiryDate)
                                      .FirstOrDefault();
-                                     
+
                 if (topVipUser == null)
                     return NotFound("Không có người dùng VIP nào.");
+
+                var avatarUrl = _blob.GetReadSasUrl("avatars", NormalizeAvatar(topVipUser.AvatarUrl), TimeSpan.FromHours(1));
 
                 return Ok(new
                 {
                     topVipUser.UserId,
                     topVipUser.FullName,
                     topVipUser.Email,
-                    topVipUser.AvatarUrl,
+                    avatarUrl,
                     VipStatus = "VIP",
                     topVipUser.VipExpiryDate
                 });
@@ -383,18 +340,114 @@ namespace DocumentSharingAPI.Controllers
                 return StatusCode(500, $"Internal server error: {ex.Message}");
             }
         }
+
+        // Rankings: Top users by uploads
+        [HttpGet("rankings/uploads")]
+        public async Task<IActionResult> GetUserRankingsByUploads([FromQuery] int limit = 10)
+        {
+            try
+            {
+                var items = await _userRepository.GetTopUsersByUploadsAsync(limit);
+                var result = items.Select(u => new
+                {
+                    userId = u.UserId,
+                    fullName = u.FullName,
+                    email = u.Email,
+                    avatarUrl = _blob.GetReadSasUrl("avatars", NormalizeAvatar(u.AvatarUrl), TimeSpan.FromHours(1)),
+                    value = u.Value
+                });
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Internal server error: {ex.Message}");
+            }
+        }
+
+        // Rankings: Top users by comments
+        [HttpGet("rankings/comments")]
+        public async Task<IActionResult> GetUserRankingsByComments([FromQuery] int limit = 10)
+        {
+            try
+            {
+                var items = await _userRepository.GetTopUsersByCommentsAsync(limit);
+                var result = items.Select(u => new
+                {
+                    userId = u.UserId,
+                    fullName = u.FullName,
+                    email = u.Email,
+                    avatarUrl = _blob.GetReadSasUrl("avatars", NormalizeAvatar(u.AvatarUrl), TimeSpan.FromHours(1)),
+                    value = u.Value
+                });
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Internal server error: {ex.Message}");
+            }
+        }
+
+        // Rankings: Top users by total document downloads of their uploads
+        [HttpGet("rankings/document-downloads")]
+        public async Task<IActionResult> GetUserRankingsByDocumentDownloads([FromQuery] int limit = 10)
+        {
+            try
+            {
+                var items = await _userRepository.GetTopUsersByDocumentDownloadsAsync(limit);
+                var result = items.Select(u => new
+                {
+                    userId = u.UserId,
+                    fullName = u.FullName,
+                    email = u.Email,
+                    avatarUrl = _blob.GetReadSasUrl("avatars", NormalizeAvatar(u.AvatarUrl), TimeSpan.FromHours(1)),
+                    totalDownloads = u.Value
+                });
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Internal server error: {ex.Message}");
+            }
+        }
+
+        // Lock/Unlock user account
+        [HttpPut("{id}/lock")]
+        public async Task<IActionResult> SetLockStatus(int id, [FromBody] LockUserModel model)
+        {
+            try
+            {
+                var user = await _userRepository.GetByIdAsync(id);
+                if (user == null)
+                    return NotFound(new { message = "User not found." });
+
+                user.IsLocked = model.IsLocked;
+                await _userRepository.UpdateAsync(user);
+
+                return Ok(new
+                {
+                    message = user.IsLocked ? "Tài khoản đã bị khóa." : "Tài khoản đã được mở khóa.",
+                    userId = user.UserId,
+                    isLocked = user.IsLocked
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = $"Internal server error: {ex.Message}" });
+            }
+        }
     }
 
+    // Models
     public class RegisterModel
     {
-        public string Email { get; set; }
+        public string Email { get; set; } = string.Empty;
         public string? Password { get; set; }
-        public string FullName { get; set; }
+        public string FullName { get; set; } = string.Empty;
     }
 
     public class LoginModel
     {
-        public string Email { get; set; }
+        public string Email { get; set; } = string.Empty;
         public string? Password { get; set; }
     }
 
@@ -416,9 +469,8 @@ namespace DocumentSharingAPI.Controllers
 
     public class AuthProviderRegisterModel
     {
-        public string FirebaseUid { get; set; }
-        public string Email { get; set; }
-        public string FullName { get; set; }
+        public string FirebaseUid { get; set; } = string.Empty;
+        public string Email { get; set; } = string.Empty;
+        public string FullName { get; set; } = string.Empty;
     }
-
 }

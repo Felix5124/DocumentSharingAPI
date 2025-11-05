@@ -13,6 +13,9 @@ using DocumentSharingAPI.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Configure Kestrel to use specific URLs
+builder.WebHost.UseUrls("https://localhost:7013");
+
 // Configure logging
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
@@ -65,7 +68,7 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", corsBuilder =>
     {
-        corsBuilder.WithOrigins("http://localhost:5173")
+        corsBuilder.WithOrigins("http://localhost:5173", "https://localhost:5173")
                    .AllowAnyMethod()
                    .AllowAnyHeader()
                    .AllowCredentials();
@@ -177,6 +180,8 @@ builder.Services.AddScoped<IUserDocumentRepository, UserDocumentRepository>();
 builder.Services.AddScoped<ITagRepository, TagRepository>();
 builder.Services.AddScoped<IVipSubscriptionRepository, VipSubscriptionRepository>();
 builder.Services.AddScoped<IGeminiChatService, GeminiChatService>();
+builder.Services.AddSingleton<IBlobService, BlobService>();
+
 
 
 // Swagger Configuration

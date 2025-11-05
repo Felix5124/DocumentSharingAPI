@@ -3,6 +3,7 @@ using DocumentSharingAPI.Repositories;
 using Microsoft.AspNetCore.Mvc;
 using System.Threading.Tasks;
 using System.Linq;
+using System;
 
 namespace DocumentSharingAPI.Controllers
 {
@@ -13,12 +14,22 @@ namespace DocumentSharingAPI.Controllers
         private readonly IPostCommentRepository _postCommentRepository;
         private readonly IPostRepository _postRepository;
         private readonly AppDbContext _context;
+        private readonly IBlobService _blob;
 
-        public PostCommentsController(IPostCommentRepository postCommentRepository, IPostRepository postRepository, AppDbContext context)
+        public PostCommentsController(IPostCommentRepository postCommentRepository, IPostRepository postRepository, AppDbContext context, IBlobService blob)
         {
             _postCommentRepository = postCommentRepository;
             _postRepository = postRepository;
             _context = context;
+            _blob = blob;
+        }
+
+        private string NormalizeAvatar(string? avatar)
+        {
+            if (string.IsNullOrWhiteSpace(avatar)) return "default-avatar.png";
+            return avatar.StartsWith("avatars/", StringComparison.OrdinalIgnoreCase)
+                ? avatar.Substring("avatars/".Length)
+                : avatar;
         }
 
         [HttpGet("post/{postId}")]
@@ -39,7 +50,8 @@ namespace DocumentSharingAPI.Controllers
                 User = c.User != null ? new
                 {
                     c.User.Email,
-                    c.User.AvatarUrl // Thêm avatarUrl vào dữ liệu trả về
+                    c.User.FullName,
+                    AvatarUrl = _blob.GetReadSasUrl("avatars", NormalizeAvatar(c.User.AvatarUrl), TimeSpan.FromHours(1))
                 } : null
             }).ToList();
             return Ok(commentDtos);
@@ -79,7 +91,8 @@ namespace DocumentSharingAPI.Controllers
                 User = user != null ? new
                 {
                     user.Email,
-                    user.AvatarUrl // Thêm avatarUrl vào dữ liệu trả về
+                    user.FullName,
+                    AvatarUrl = _blob.GetReadSasUrl("avatars", NormalizeAvatar(user.AvatarUrl), TimeSpan.FromHours(1))
                 } : null
             });
         }
@@ -99,7 +112,7 @@ namespace DocumentSharingAPI.Controllers
     public class PostCommentModel
     {
         public int PostId { get; set; }
-        public string Content { get; set; }
+        public string Content { get; set; } = string.Empty;
         public int? UserId { get; set; } // UserId bắt buộc từ body
     }
 }
