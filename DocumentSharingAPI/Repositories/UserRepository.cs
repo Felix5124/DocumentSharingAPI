@@ -84,7 +84,7 @@ namespace DocumentSharingAPI.Repositories
         public async Task<IEnumerable<UserRankingItemDto>> GetTopUsersByUploadsAsync(int limit)
         {
             return await _context.Users
-                .OrderByDescending(u => u.UploadedDocuments.Count(d => d.IsApproved && !d.IsLock)) // Chỉ đếm tài liệu đã duyệt và không khóa
+                .OrderByDescending(u => u.UploadedDocuments.Count(d => (d.ApprovalStatus == "Approved" || d.ApprovalStatus == "SemiApproved") && !d.IsLock)) // Chỉ đếm tài liệu đã duyệt và không khóa
                 .Take(limit)
                 .Select(u => new UserRankingItemDto
                 {
@@ -92,7 +92,7 @@ namespace DocumentSharingAPI.Repositories
                     FullName = u.FullName,
                     Email = u.Email,
                     AvatarUrl = u.AvatarUrl,
-                    Value = u.UploadedDocuments.Count(d => d.IsApproved && !d.IsLock)
+                    Value = u.UploadedDocuments.Count(d => (d.ApprovalStatus == "Approved" || d.ApprovalStatus == "SemiApproved") && !d.IsLock)
                 })
                 .ToListAsync();
         }
@@ -124,7 +124,7 @@ namespace DocumentSharingAPI.Repositories
             {
                 // Bước 1: Tính toán tổng lượt tải cho mỗi user
                 var userDownloadStats = _context.Documents
-                    .Where(d => d.IsApproved && !d.IsLock)
+                    .Where(d => (d.ApprovalStatus == "Approved" || d.ApprovalStatus == "SemiApproved") && !d.IsLock)
                     .GroupBy(d => d.UploadedBy) // Group theo UserId của người tải lên
                     .Select(g => new
                     {

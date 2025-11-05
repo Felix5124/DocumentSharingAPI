@@ -181,6 +181,7 @@ builder.Services.AddScoped<ITagRepository, TagRepository>();
 builder.Services.AddScoped<IVipSubscriptionRepository, VipSubscriptionRepository>();
 builder.Services.AddScoped<IGeminiChatService, GeminiChatService>();
 builder.Services.AddSingleton<IBlobService, BlobService>();
+builder.Services.AddScoped<IFileValidationService, FileValidationService>();
 
 
 
@@ -250,7 +251,7 @@ app.UseStaticFiles(new StaticFileOptions
     FileProvider = new PhysicalFileProvider(filesPath),
     RequestPath = "/Files"
 });
-app.UseStaticFiles();
+// app.UseStaticFiles(); // Removed to avoid wwwroot requirement
 app.UseCors("AllowFrontend");
 app.UseRouting();
 app.UseAuthentication();

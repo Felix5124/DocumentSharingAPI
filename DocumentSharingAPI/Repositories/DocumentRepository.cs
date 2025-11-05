@@ -98,7 +98,7 @@ namespace DocumentSharingAPI.Repositories
 
         public async Task<IEnumerable<Document>> GetPendingDocumentsAsync()
         {
-            return await _context.Documents.Where(d => !d.IsApproved).ToListAsync();
+            return await _context.Documents.Where(d => d.ApprovalStatus == "Pending").ToListAsync();
         }
 
         public async Task ApproveDocumentAsync(int id)
@@ -107,7 +107,7 @@ namespace DocumentSharingAPI.Repositories
             if (document == null)
                 throw new Exception("Document not found");
 
-            document.IsApproved = true;
+            document.ApprovalStatus = "Approved";
             await _context.SaveChangesAsync();
         }
 
@@ -146,7 +146,7 @@ namespace DocumentSharingAPI.Repositories
                 .AsQueryable();
 
             // Lọc tài liệu đã duyệt và không bị khóa
-            query = query.Where(d => d.IsApproved == true && !d.IsLock);
+            query = query.Where(d => (d.ApprovalStatus == "Approved" || d.ApprovalStatus == "SemiApproved") && !d.IsLock);
 
             // Lọc theo từ khóa
             if (!string.IsNullOrEmpty(keyword))
@@ -223,7 +223,7 @@ namespace DocumentSharingAPI.Repositories
 
             if (isApproved)
             {
-                query = query.Where(d => d.IsApproved == true);
+                query = query.Where(d => d.ApprovalStatus == "Approved" || d.ApprovalStatus == "SemiApproved");
             }
 
             return await query.CountAsync();
@@ -247,7 +247,7 @@ namespace DocumentSharingAPI.Repositories
         public async Task<Document> GetTopDownloadedDocumentAsync()
         {
             return await _context.Documents
-                .Where(d => d.IsApproved == true)
+                .Where(d => d.ApprovalStatus == "Approved" || d.ApprovalStatus == "SemiApproved")
                 .OrderByDescending(d => d.DownloadCount)
                 .Select(d => new Document
                 {
@@ -282,7 +282,7 @@ namespace DocumentSharingAPI.Repositories
                 .Include(d => d.User) 
                 .Include(d => d.DocumentTags)
                     .ThenInclude(dt => dt.Tag)
-                .Where(d => d.DocumentId != excludeDocumentId && d.IsApproved && !d.IsLock)
+                .Where(d => d.DocumentId != excludeDocumentId && (d.ApprovalStatus == "Approved" || d.ApprovalStatus == "SemiApproved") && !d.IsLock)
                 .Where(d => d.DocumentTags.Any(dt => normalizedTagNames.Contains(dt.Tag.Name.ToLower())));
 
             var documentsWithMatchCount = await query
