@@ -225,8 +225,8 @@ namespace DocumentSharingAPI.Controllers
                 if (!string.IsNullOrEmpty(document.FileUrl))
                 {
                     // Remove prefix "documents/" if present để tránh double path
-                    var blobPathToDelete = document.FileUrl.StartsWith("documents/") 
-                        ? document.FileUrl.Substring("documents/".Length) 
+                    var blobPathToDelete = document.FileUrl.StartsWith("documents/")
+                        ? document.FileUrl.Substring("documents/".Length)
                         : document.FileUrl;
                     await _blob.DeleteAsync("documents", blobPathToDelete);
                     Console.WriteLine($"Deleted old blob: {document.FileUrl}");
@@ -236,7 +236,7 @@ namespace DocumentSharingAPI.Controllers
                 var newGuid = Guid.NewGuid().ToString("N");
                 var newBlobName = $"documents/{newGuid}/{Path.GetFileName(model.File.FileName)}";
                 await using var fileStream = model.File.OpenReadStream();
-                
+
                 // Ensure correct MIME type for the updated file
                 var correctMimeType = GetMimeTypeByExtension(extension);
                 await _blob.UploadAsync("documents", newBlobName, fileStream, correctMimeType);
@@ -307,8 +307,8 @@ namespace DocumentSharingAPI.Controllers
                 if (!string.IsNullOrEmpty(document.FileUrl))
                 {
                     // Remove prefix "documents/" if present để tránh double path
-                    var blobPathToDelete = document.FileUrl.StartsWith("documents/") 
-                        ? document.FileUrl.Substring("documents/".Length) 
+                    var blobPathToDelete = document.FileUrl.StartsWith("documents/")
+                        ? document.FileUrl.Substring("documents/".Length)
                         : document.FileUrl;
                     await _blob.DeleteAsync("documents", blobPathToDelete);
                     Console.WriteLine($"Deleted document blob: {document.FileUrl}");
@@ -375,7 +375,7 @@ namespace DocumentSharingAPI.Controllers
             var fileGuid = Guid.NewGuid().ToString("N");
             await using var fileStream = model.File.OpenReadStream();
             var fileName = $"{fileGuid}/{Path.GetFileName(model.File.FileName)}";
-            
+
             // Ensure correct MIME type based on extension
             var correctMimeType = GetMimeTypeByExtension(extension);
             await _blob.UploadAsync("documents", fileName, fileStream, correctMimeType);
@@ -529,6 +529,7 @@ namespace DocumentSharingAPI.Controllers
                         d.Category,
                         d.UploadedBy,
                         Email = user?.Email ?? "Không xác định",
+                        FullName = user?.FullName ?? "Ẩn danh",
                         d.UploadedAt,
                         d.DownloadCount,
                         d.IsVipOnly,
@@ -718,8 +719,8 @@ namespace DocumentSharingAPI.Controllers
 
                 // Tạo SAS URL cho download (có thể dùng cách này để redirect)
                 // Loại bỏ prefix "documents/" nếu có để tránh duplicate path
-                var blobPath = document.FileUrl.StartsWith("documents/") 
-                    ? document.FileUrl.Substring("documents/".Length) 
+                var blobPath = document.FileUrl.StartsWith("documents/")
+                    ? document.FileUrl.Substring("documents/".Length)
                     : document.FileUrl;
                 var sasUrl = _blob.GetReadSasUrl("documents", blobPath, TimeSpan.FromMinutes(10));
                 return Ok(new { url = sasUrl, fileName = $"{document.Title}.{document.FileType}" });
@@ -766,8 +767,8 @@ namespace DocumentSharingAPI.Controllers
             {
                 // Tạo SAS URL cho preview PDF
                 // Loại bỏ prefix "documents/" nếu có để tránh duplicate path
-                var blobPath = document.FileUrl.StartsWith("documents/") 
-                    ? document.FileUrl.Substring("documents/".Length) 
+                var blobPath = document.FileUrl.StartsWith("documents/")
+                    ? document.FileUrl.Substring("documents/".Length)
                     : document.FileUrl;
                 var sasUrl = _blob.GetReadSasUrl("documents", blobPath, TimeSpan.FromMinutes(5));
                 return Ok(new { url = sasUrl });
