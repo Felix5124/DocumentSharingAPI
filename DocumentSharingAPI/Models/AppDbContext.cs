@@ -22,6 +22,7 @@ namespace DocumentSharingAPI.Models
         public DbSet<VipSubscription> VipSubscriptions { get; set; }
         public DbSet<Tag> Tags { get; set; }
         public DbSet<DocumentTag> DocumentTags { get; set; }
+        public DbSet<Report> Reports { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -121,19 +122,32 @@ namespace DocumentSharingAPI.Models
 
             modelBuilder.Entity<DocumentTag>(entity =>
             {
-                entity.HasKey(dt => new { dt.DocumentId, dt.TagId }); 
+                entity.HasKey(dt => new { dt.DocumentId, dt.TagId });
 
                 entity.HasOne(dt => dt.Document)
                     .WithMany(d => d.DocumentTags)
                     .HasForeignKey(dt => dt.DocumentId)
-                    .OnDelete(DeleteBehavior.Cascade); 
+                    .OnDelete(DeleteBehavior.Cascade);
 
                 entity.HasOne(dt => dt.Tag)
                     .WithMany(t => t.DocumentTags)
                     .HasForeignKey(dt => dt.TagId)
-                    .OnDelete(DeleteBehavior.Cascade); 
-                                                       
+                    .OnDelete(DeleteBehavior.Cascade);
+                                                        
             });
+
+            // Cấu hình quan hệ cho Report
+            modelBuilder.Entity<Report>()
+                .HasOne(r => r.Document)
+                .WithMany()
+                .HasForeignKey(r => r.DocumentId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<Report>()
+                .HasOne(r => r.User)
+                .WithMany()
+                .HasForeignKey(r => r.ReporterUserId)
+                .OnDelete(DeleteBehavior.Restrict);
         }
     }
 }

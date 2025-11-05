@@ -34,7 +34,7 @@ namespace DocumentSharingAPI.Repositories
                 if (!categories.Any())
                 {
                     return await _context.Documents
-                        .Where(d => d.IsApproved == true) // Chỉ lấy tài liệu đã được duyệt
+                        .Where(d => d.ApprovalStatus == "Approved" || d.ApprovalStatus == "SemiApproved") // Chỉ lấy tài liệu đã được duyệt
                         .OrderByDescending(d => d.DownloadCount) // Sắp xếp theo lượt tải
                         .Take(10)
                         .ToListAsync();
@@ -45,7 +45,7 @@ namespace DocumentSharingAPI.Repositories
                     .Where(d =>
                         categories.Contains(d.CategoryId) && // Thuộc danh mục đã tương tác
                         !userDocIds.Contains(d.DocumentId) && // Chưa từng tương tác
-                        d.IsApproved == true) // Đã được duyệt
+                        (d.ApprovalStatus == "Approved" || d.ApprovalStatus == "SemiApproved")) // Đã được duyệt
                     .Take(10)
                     .ToListAsync();
 

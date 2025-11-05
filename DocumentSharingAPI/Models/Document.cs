@@ -20,7 +20,15 @@ namespace DocumentSharingAPI.Models
         public DateTime UploadedAt { get; set; } = DateTime.Now;
         public int DownloadCount { get; set; } = 0;
         public bool IsVipOnly { get; set; } = false; // Tài liệu VIP hay thường
-        public bool IsApproved { get; set; } = false;
+        
+        // THAY THẾ: bool IsApproved bằng ApprovalStatus
+        [Required]
+        [MaxLength(20)]
+        public string ApprovalStatus { get; set; } = "Pending"; // Các giá trị: "Pending", "SemiApproved", "Approved", "Rejected"
+        
+        // THÊM: trường đếm số lượt báo cáo
+        public int ReportCount { get; set; } = 0;
+        
         public bool IsLock { get; set; } = false;
         public string? CoverImageUrl { get; set; }
         public int ApprovalPriority { get; set; } = 0; // Độ ưu tiên duyệt (VIP = 1, thường = 0)

@@ -1,5 +1,6 @@
 ﻿using DocumentSharingAPI.Models;
 using DocumentSharingAPI.Repositories;
+using DocumentSharingAPI.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System;
@@ -26,6 +27,7 @@ namespace DocumentSharingAPI.Controllers
         private readonly IFollowRepository _followRepository;
         private readonly AppDbContext _context;
         private readonly IBlobService _blob;
+        private readonly IFileValidationService _fileValidationService;
 
         public DocumentsController(
             IDocumentRepository documentRepository,
@@ -36,7 +38,8 @@ namespace DocumentSharingAPI.Controllers
             ITagRepository tagRepository,
             IFollowRepository followRepository,
             AppDbContext context,
-            IBlobService blob)
+            IBlobService blob,
+            IFileValidationService fileValidationService)
         {
             _documentRepository = documentRepository;
             _categoryRepository = categoryRepository;
@@ -47,6 +50,7 @@ namespace DocumentSharingAPI.Controllers
             _followRepository = followRepository;
             _context = context;
             _blob = blob;
+            _fileValidationService = fileValidationService;
         }
 
         [HttpGet]
@@ -69,7 +73,7 @@ namespace DocumentSharingAPI.Controllers
                     d.DownloadCount,
                     d.FileType,
                     d.IsVipOnly,
-                    d.IsApproved,
+                    ApprovalStatus = d.ApprovalStatus,
                     d.IsLock,
                     d.UploadedBy,
                     Email = user?.Email ?? "Không xác định"
@@ -109,7 +113,7 @@ namespace DocumentSharingAPI.Controllers
                 document.UploadedAt,
                 document.DownloadCount,
                 document.IsVipOnly,
-                document.IsApproved,
+                ApprovalStatus = document.ApprovalStatus,
                 document.IsLock,
                 document.Comments,
                 document.UserDocuments
@@ -144,7 +148,7 @@ namespace DocumentSharingAPI.Controllers
                 UploadedBy = model.UploadedBy,
                 UploadedAt = DateTime.Now,
                 IsVipOnly = model.IsVipOnly,
-                IsApproved = false,
+                ApprovalStatus = "Pending",
                 IsLock = false
             };
             await _documentRepository.AddAsync(document);
@@ -363,13 +367,33 @@ namespace DocumentSharingAPI.Controllers
                 return BadRequest("Tiêu đề tài liệu đã tồn tại.");
             }
 
-            var allowedExtensions = new[] { ".pdf", ".docx", ".txt" };
+            // --- BẮT ĐẦU LOGIC VALIDATION MỚI ---
+
+            // 1. Kiểm tra kích thước file (ví dụ: 50MB)
+            const long maxFileSize = 50 * 1024 * 1024; // 50 MB
+            if (model.File.Length > maxFileSize)
+            {
+                return BadRequest($"Dung lượng file không được vượt quá {maxFileSize / 1024 / 1024}MB.");
+            }
+
+            // 2. Kiểm tra định dạng file (đuôi file)
+            var allowedExtensions = new[] { ".pdf", ".docx", ".txt", ".pptx", ".zip" };
             var extension = Path.GetExtension(model.File.FileName).ToLower();
             if (!allowedExtensions.Contains(extension))
             {
                 Console.WriteLine($"Invalid file extension: {extension}");
-                return BadRequest("Định dạng file không hợp lệ. Chỉ chấp nhận PDF, DOCX, và TXT.");
+                return BadRequest("Định dạng file không hợp lệ. Chỉ chấp nhận PDF, DOCX, TXT, PPTX, ZIP.");
             }
+
+            // 3. Kiểm tra chữ ký file (MIME type an toàn hơn)
+            await using var fileStreamForValidation = model.File.OpenReadStream();
+            var isSignatureValid = await _fileValidationService.ValidateFileSignatureAsync(fileStreamForValidation, extension);
+            if (!isSignatureValid)
+            {
+                return BadRequest("Nội dung file không khớp với định dạng. File có thể bị lỗi hoặc không an toàn.");
+            }
+
+            // --- KẾT THÚC LOGIC VALIDATION MỚI ---
 
             // Upload file tài liệu lên Azure Blob
             var fileGuid = Guid.NewGuid().ToString("N");
@@ -421,7 +445,8 @@ namespace DocumentSharingAPI.Controllers
                 UploadedBy = model.UploadedBy,
                 UploadedAt = DateTime.Now,
                 IsVipOnly = model.IsVipOnly,
-                IsApproved = false,
+                ApprovalStatus = "SemiApproved", // Trạng thái mới sau khi qua validation
+                ReportCount = 0,
                 IsLock = false,
                 ApprovalPriority = user.IsVip && user.VipExpiryDate > DateTime.Now ? 1 : 0 // VIP user có độ ưu tiên cao hơn
             };
@@ -454,17 +479,12 @@ namespace DocumentSharingAPI.Controllers
                 AddedAt = DateTime.Now
             };
             await _userDocumentRepository.AddAsync(userDocument);
-<<<<<<< Updated upstream
-            // Thưởng cho mọi tài khoản: 1 lượt tải bonus khi upload tài liệu được duyệt
-            // Cho phép người dùng chọn loại bonus download (VIP hoặc thường)
-            await _userRepository.AddBonusDownloadAsync(model.UploadedBy, model.PreferVipBonus);
-=======
+
 
             // Thưởng cho mọi tài khoản: 1 lượt tải bonus khi upload tài liệu được duyệt
             // Cho phép người dùng chọn loại bonus download (VIP hoặc thường)
             await _userRepository.AddBonusDownloadAsync(model.UploadedBy, model.PreferVipBonus);
 
->>>>>>> Stashed changes
             var uploadCount = await _context.Documents.CountAsync(d => d.UploadedBy == model.UploadedBy);
             if (uploadCount >= 5)
             {
@@ -541,7 +561,7 @@ namespace DocumentSharingAPI.Controllers
                         d.UploadedAt,
                         d.DownloadCount,
                         d.IsVipOnly,
-                        d.IsApproved,
+                        ApprovalStatus = d.ApprovalStatus,
                         d.IsLock,
                         d.Comments,
                         d.UserDocuments
@@ -655,7 +675,7 @@ namespace DocumentSharingAPI.Controllers
                         d.UploadedAt,
                         d.DownloadCount,
                         d.IsVipOnly,
-                        d.IsApproved,
+                        ApprovalStatus = d.ApprovalStatus,
                         d.IsLock
                     })
                     .ToListAsync();
@@ -684,7 +704,7 @@ namespace DocumentSharingAPI.Controllers
                 if (document == null)
                     return NotFound(new { message = "Tài liệu không tồn tại." });
 
-                if (!document.IsApproved)
+                if (document.ApprovalStatus != "Approved" && document.ApprovalStatus != "SemiApproved")
                     return BadRequest(new { message = "Tài liệu chưa được duyệt." });
 
                 if (document.IsLock)
@@ -709,10 +729,6 @@ namespace DocumentSharingAPI.Controllers
 
                 // Cập nhật số lượt download đã sử dụng (bao gồm cả việc trừ bonus downloads nếu cần)
                 await _userRepository.UpdateDownloadCountsAsync(userId, document.IsVipOnly);
-<<<<<<< Updated upstream
-=======
-
->>>>>>> Stashed changes
                 await _documentRepository.IncrementDownloadCountAsync(id);
 
                 var userDocument = await _userDocumentRepository.GetByUserIdDocumentIdAndActionAsync(userId, id, "Download");
@@ -728,6 +744,64 @@ namespace DocumentSharingAPI.Controllers
                 }
 
                 await _context.SaveChangesAsync();
+
+                // --- BẮT ĐẦU LOGIC TỰ ĐỘNG DUYỆT ---
+                const int downloadThresholdForApproval = 10; // Cấu hình ngưỡng ở đây hoặc trong appsettings.json
+                
+                // Tải lại thông tin document sau khi tăng DownloadCount
+                var updatedDocument = await _documentRepository.GetByIdAsync(id);
+
+                // Kiểm tra auto-approval
+                if (updatedDocument.ApprovalStatus == "SemiApproved" &&
+                    updatedDocument.DownloadCount >= downloadThresholdForApproval &&
+                    updatedDocument.ReportCount == 0)
+                {
+                    updatedDocument.ApprovalStatus = "Approved";
+                    await _documentRepository.UpdateAsync(updatedDocument);
+
+                    // Gửi thông báo cho người đăng
+                    var notification = new Notification
+                    {
+                        UserId = updatedDocument.UploadedBy,
+                        Message = $"Tài liệu '{updatedDocument.Title}' của bạn đã được tự động duyệt sau khi đạt {downloadThresholdForApproval} lượt tải.",
+                        DocumentId = updatedDocument.DocumentId,
+                        SentAt = DateTime.Now,
+                        IsRead = false
+                    };
+                    await _notificationRepository.AddAsync(notification);
+                }
+
+                // Kiểm tra nếu số lượng report bằng 1/10 số lượng download thì chuyển sang Pending
+                if ((updatedDocument.ApprovalStatus == "SemiApproved" || updatedDocument.ApprovalStatus == "Approved") &&
+                    updatedDocument.DownloadCount > 0 &&
+                    updatedDocument.ReportCount >= (updatedDocument.DownloadCount / 10))
+                {
+                    updatedDocument.ApprovalStatus = "Pending";
+                    await _documentRepository.UpdateAsync(updatedDocument);
+
+                    // Gửi thông báo cho admin
+                    var adminNotification = new Notification
+                    {
+                        UserId = 1, // Giả sử admin có ID = 1
+                        Message = $"Tài liệu '{updatedDocument.Title}' đã bị chuyển sang trạng thái Pending do có {updatedDocument.ReportCount} báo cáo trên {updatedDocument.DownloadCount} lượt tải.",
+                        DocumentId = updatedDocument.DocumentId,
+                        SentAt = DateTime.Now,
+                        IsRead = false
+                    };
+                    await _notificationRepository.AddAsync(adminNotification);
+
+                    // Gửi thông báo cho người đăng
+                    var uploaderNotification = new Notification
+                    {
+                        UserId = updatedDocument.UploadedBy,
+                        Message = $"Tài liệu '{updatedDocument.Title}' của bạn đã bị chuyển sang trạng thái chờ xử lý do có nhiều báo cáo vi phạm.",
+                        DocumentId = updatedDocument.DocumentId,
+                        SentAt = DateTime.Now,
+                        IsRead = false
+                    };
+                    await _notificationRepository.AddAsync(uploaderNotification);
+                }
+                // --- KẾT THÚC LOGIC TỰ ĐỘNG DUYỆT ---
 
                 // Tạo SAS URL cho download (có thể dùng cách này để redirect)
                 // Loại bỏ prefix "documents/" nếu có để tránh duplicate path
@@ -757,9 +831,9 @@ namespace DocumentSharingAPI.Controllers
                 return NotFound("Tài liệu không tồn tại.");
             }
 
-            if (!document.IsApproved)
+            if (document.ApprovalStatus != "Approved" && document.ApprovalStatus != "SemiApproved")
             {
-                Console.WriteLine($"Document {id} is not approved.");
+                Console.WriteLine($"Document {id} is not approved. Current status: {document.ApprovalStatus}");
                 return BadRequest("Tài liệu chưa được duyệt.");
             }
 
@@ -821,7 +895,7 @@ namespace DocumentSharingAPI.Controllers
             {
                 var topDocuments = await _context.Documents
                     .Include(d => d.User)
-                    .Where(d => d.IsApproved && !d.IsLock)
+                    .Where(d => (d.ApprovalStatus == "Approved" || d.ApprovalStatus == "SemiApproved") && !d.IsLock)
                     .OrderByDescending(d => d.DownloadCount)
                     .Take(limit)
                     .Select(d => new
@@ -925,7 +999,7 @@ namespace DocumentSharingAPI.Controllers
             var relatedDocumentsQuery = _context.Documents
                 .Where(d => d.CategoryId == currentDocument.CategoryId &&
                             d.DocumentId != id &&
-                            d.IsApproved &&
+                            (d.ApprovalStatus == "Approved" || d.ApprovalStatus == "SemiApproved") &&
                             !d.IsLock)
                 .OrderByDescending(d => d.DownloadCount)
                 .Take(count);
