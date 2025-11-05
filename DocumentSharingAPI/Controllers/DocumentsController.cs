@@ -454,9 +454,17 @@ namespace DocumentSharingAPI.Controllers
                 AddedAt = DateTime.Now
             };
             await _userDocumentRepository.AddAsync(userDocument);
+<<<<<<< Updated upstream
             // Thưởng cho mọi tài khoản: 1 lượt tải bonus khi upload tài liệu được duyệt
             // Cho phép người dùng chọn loại bonus download (VIP hoặc thường)
             await _userRepository.AddBonusDownloadAsync(model.UploadedBy, model.PreferVipBonus);
+=======
+
+            // Thưởng cho mọi tài khoản: 1 lượt tải bonus khi upload tài liệu được duyệt
+            // Cho phép người dùng chọn loại bonus download (VIP hoặc thường)
+            await _userRepository.AddBonusDownloadAsync(model.UploadedBy, model.PreferVipBonus);
+
+>>>>>>> Stashed changes
             var uploadCount = await _context.Documents.CountAsync(d => d.UploadedBy == model.UploadedBy);
             if (uploadCount >= 5)
             {
@@ -701,6 +709,10 @@ namespace DocumentSharingAPI.Controllers
 
                 // Cập nhật số lượt download đã sử dụng (bao gồm cả việc trừ bonus downloads nếu cần)
                 await _userRepository.UpdateDownloadCountsAsync(userId, document.IsVipOnly);
+<<<<<<< Updated upstream
+=======
+
+>>>>>>> Stashed changes
                 await _documentRepository.IncrementDownloadCountAsync(id);
 
                 var userDocument = await _userDocumentRepository.GetByUserIdDocumentIdAndActionAsync(userId, id, "Download");
