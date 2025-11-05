@@ -58,35 +58,59 @@ namespace DocumentSharingAPI.Controllers
             document.ReportCount++;
             await _documentRepository.UpdateAsync(document);
 
-            // Kiểm tra nếu số lượng report bằng 1/10 số lượng download thì chuyển sang Pending
-            if ((document.ApprovalStatus == "SemiApproved" || document.ApprovalStatus == "Approved") &&
-                document.DownloadCount > 0 &&
-                document.ReportCount >= (document.DownloadCount / 10))
+            // Kiểm tra logic báo cáo theo từng giai đoạn lượt tải
+            if ((document.ApprovalStatus == "SemiApproved" || document.ApprovalStatus == "Approved"))
             {
-                document.ApprovalStatus = "Pending";
-                await _documentRepository.UpdateAsync(document);
-
-                // Gửi thông báo cho admin
-                var adminNotification = new Notification
+                bool shouldChangeToPending = false;
+                
+                // Giai đoạn Mới Tải Lên (0 Lượt tải): Yêu cầu ít nhất 2 báo cáo
+                if (document.DownloadCount == 0 && document.ReportCount >= 2)
                 {
-                    UserId = 1, // Giả sử admin có ID = 1
-                    Message = $"Tài liệu '{document.Title}' đã bị chuyển sang trạng thái Pending do có {document.ReportCount} báo cáo trên {document.DownloadCount} lượt tải.",
-                    DocumentId = document.DocumentId,
-                    SentAt = DateTime.Now,
-                    IsRead = false
-                };
-                await _notificationRepository.AddAsync(adminNotification);
-
-                // Gửi thông báo cho người đăng
-                var uploaderNotification = new Notification
+                    shouldChangeToPending = true;
+                }
+                // Giai đoạn Ban đầu (1 - 20 Lượt tải): Yêu cầu ít nhất 2 báo cáo
+                else if (document.DownloadCount >= 1 && document.DownloadCount <= 20 && document.ReportCount >= 2)
                 {
-                    UserId = document.UploadedBy,
-                    Message = $"Tài liệu '{document.Title}' của bạn đã bị chuyển sang trạng thái chờ xử lý do có nhiều báo cáo vi phạm.",
-                    DocumentId = document.DocumentId,
-                    SentAt = DateTime.Now,
-                    IsRead = false
-                };
-                await _notificationRepository.AddAsync(uploaderNotification);
+                    shouldChangeToPending = true;
+                }
+                // Giai đoạn Phát triển (21 - 100 Lượt tải): Yêu cầu ít nhất 3 báo cáo
+                else if (document.DownloadCount >= 21 && document.DownloadCount <= 100 && document.ReportCount >= 3)
+                {
+                    shouldChangeToPending = true;
+                }
+                // Giai đoạn Tin cậy (> 100 Lượt tải): Yêu cầu 10% lượt tải
+                else if (document.DownloadCount > 100 && document.ReportCount >= (document.DownloadCount / 10))
+                {
+                    shouldChangeToPending = true;
+                }
+                
+                if (shouldChangeToPending)
+                {
+                    document.ApprovalStatus = "Pending";
+                    await _documentRepository.UpdateAsync(document);
+
+                    // Gửi thông báo cho admin
+                    var adminNotification = new Notification
+                    {
+                        UserId = 1, // Giả sử admin có ID = 1
+                        Message = $"Tài liệu '{document.Title}' đã bị chuyển sang trạng thái Pending do có {document.ReportCount} báo cáo.",
+                        DocumentId = document.DocumentId,
+                        SentAt = DateTime.Now,
+                        IsRead = false
+                    };
+                    await _notificationRepository.AddAsync(adminNotification);
+
+                    // Gửi thông báo cho người đăng
+                    var uploaderNotification = new Notification
+                    {
+                        UserId = document.UploadedBy,
+                        Message = $"Tài liệu '{document.Title}' của bạn đã bị chuyển sang trạng thái chờ xử lý do có nhiều báo cáo vi phạm.",
+                        DocumentId = document.DocumentId,
+                        SentAt = DateTime.Now,
+                        IsRead = false
+                    };
+                    await _notificationRepository.AddAsync(uploaderNotification);
+                }
             }
 
             await _context.SaveChangesAsync();
@@ -107,6 +131,32 @@ namespace DocumentSharingAPI.Controllers
                     DocumentTitle = r.Document.Title,
                     r.ReporterUserId,
                     ReporterEmail = r.User.Email,
+                    ReporterName = r.User.FullName,
+                    r.Reason,
+                    r.Details,
+                    r.Status,
+                    r.ReportedAt
+                })
+                .ToListAsync();
+
+            return Ok(reports);
+        }
+
+        [HttpGet("processed")]
+        public async Task<IActionResult> GetProcessedReports()
+        {
+            var reports = await _context.Reports
+                .Include(r => r.Document)
+                .Include(r => r.User)
+                .Where(r => r.Status == "Resolved" || r.Status == "Rejected")
+                .Select(r => new
+                {
+                    r.ReportId,
+                    r.DocumentId,
+                    DocumentTitle = r.Document.Title,
+                    r.ReporterUserId,
+                    ReporterEmail = r.User.Email,
+                    ReporterName = r.User.FullName,
                     r.Reason,
                     r.Details,
                     r.Status,

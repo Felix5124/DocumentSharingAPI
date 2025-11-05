@@ -66,7 +66,7 @@ namespace DocumentSharingAPI.Controllers
                 {
                     d.DocumentId,
                     d.Title,
-                    Tags = d.DocumentTags.Select(dt => new TagDto { TagId = dt.Tag.TagId, Name = dt.Tag.Name }).ToList(),
+                    Tags = d.DocumentTags.Where(dt => dt.Tag != null).Select(dt => new TagDto { TagId = dt.Tag.TagId, Name = dt.Tag.Name }).ToList(),
                     d.Description,
                     d.CoverImageUrl,
                     d.UploadedAt,
@@ -74,6 +74,7 @@ namespace DocumentSharingAPI.Controllers
                     d.FileType,
                     d.IsVipOnly,
                     ApprovalStatus = d.ApprovalStatus,
+                    ReportCount = d.ReportCount,
                     d.IsLock,
                     d.UploadedBy,
                     Email = user?.Email ?? "Không xác định"
@@ -99,7 +100,7 @@ namespace DocumentSharingAPI.Controllers
             {
                 document.DocumentId,
                 document.Title,
-                Tags = document.DocumentTags.Select(dt => new TagDto { TagId = dt.Tag.TagId, Name = dt.Tag.Name }).ToList(),
+                Tags = document.DocumentTags.Where(dt => dt.Tag != null).Select(dt => new TagDto { TagId = dt.Tag.TagId, Name = dt.Tag.Name }).ToList(),
 
                 document.Description,
                 document.FileUrl,
@@ -114,6 +115,7 @@ namespace DocumentSharingAPI.Controllers
                 document.DownloadCount,
                 document.IsVipOnly,
                 ApprovalStatus = document.ApprovalStatus,
+                ReportCount = document.ReportCount,
                 document.IsLock,
                 document.Comments,
                 document.UserDocuments
@@ -547,7 +549,7 @@ namespace DocumentSharingAPI.Controllers
                     {
                         d.DocumentId,
                         d.Title,
-                        Tags = d.DocumentTags.Select(dt => new TagDto { TagId = dt.Tag.TagId, Name = dt.Tag.Name }).ToList(),
+                        Tags = d.DocumentTags.Where(dt => dt.Tag != null).Select(dt => new TagDto { TagId = dt.Tag.TagId, Name = dt.Tag.Name }).ToList(),
                         d.Description,
                         d.FileUrl,
                         d.CoverImageUrl,
@@ -562,6 +564,7 @@ namespace DocumentSharingAPI.Controllers
                         d.DownloadCount,
                         d.IsVipOnly,
                         ApprovalStatus = d.ApprovalStatus,
+                        ReportCount = d.ReportCount,
                         d.IsLock,
                         d.Comments,
                         d.UserDocuments
@@ -598,6 +601,10 @@ namespace DocumentSharingAPI.Controllers
                 }
 
                 await _documentRepository.ApproveDocumentAsync(id);
+                
+                // Tự động reset report count khi duyệt tài liệu
+                document.ReportCount = 0;
+                await _documentRepository.UpdateAsync(document);
 
                 // Gửi thông báo cho người đăng tài liệu
                 var uploaderNotification = new Notification
@@ -676,6 +683,7 @@ namespace DocumentSharingAPI.Controllers
                         d.DownloadCount,
                         d.IsVipOnly,
                         ApprovalStatus = d.ApprovalStatus,
+                        ReportCount = d.ReportCount,
                         d.IsLock
                     })
                     .ToListAsync();
@@ -1023,6 +1031,53 @@ namespace DocumentSharingAPI.Controllers
         }
 
 
+
+        [HttpPut("{id}/reset-reports")]
+        public async Task<IActionResult> ResetReportCount(int id)
+        {
+            try
+            {
+                var document = await _documentRepository.GetByIdAsync(id);
+                if (document == null)
+                    return NotFound("Tài liệu không tồn tại.");
+
+                // Reset report count và khôi phục trạng thái
+                document.ReportCount = 0;
+                if (document.ApprovalStatus == "Pending")
+                {
+                    document.ApprovalStatus = "SemiApproved"; // Khôi phục về trạng thái bán duyệt
+                }
+
+                await _documentRepository.UpdateAsync(document);
+
+                // Gửi thông báo cho người đăng
+                var notification = new Notification
+                {
+                    UserId = document.UploadedBy,
+                    Message = $"Tài liệu '{document.Title}' của bạn đã được khôi phục trạng thái sau khi xem xét báo cáo.",
+                    DocumentId = document.DocumentId,
+                    SentAt = DateTime.Now,
+                    IsRead = false
+                };
+
+                const int MaxNotificationsPerUser = 100;
+                var currentCount = await _notificationRepository.CountByUserIdAsync(document.UploadedBy);
+                if (currentCount >= MaxNotificationsPerUser)
+                {
+                    int countToDelete = currentCount - MaxNotificationsPerUser + 1;
+                    await _notificationRepository.DeleteOldestByUserIdAsync(document.UploadedBy, countToDelete);
+                }
+
+                await _notificationRepository.AddAsync(notification);
+
+                return Ok(new { Message = "Đã reset số lượng báo cáo và khôi phục trạng thái tài liệu." });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error resetting report count for document {id}: {ex.Message}");
+                return StatusCode(500, $"Lỗi server: {ex.Message}");
+            }
+        }
 
         [HttpGet("related-by-tags")]
         public async Task<IActionResult> GetRelatedDocumentsByTags([FromQuery] List<string> tagNames, [FromQuery] int excludeDocumentId, [FromQuery] int limit = 5)
