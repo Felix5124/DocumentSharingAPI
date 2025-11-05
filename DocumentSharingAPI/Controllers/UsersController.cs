@@ -409,6 +409,32 @@ namespace DocumentSharingAPI.Controllers
                 return StatusCode(500, $"Internal server error: {ex.Message}");
             }
         }
+
+        // Lock/Unlock user account
+        [HttpPut("{id}/lock")]
+        public async Task<IActionResult> SetLockStatus(int id, [FromBody] LockUserModel model)
+        {
+            try
+            {
+                var user = await _userRepository.GetByIdAsync(id);
+                if (user == null)
+                    return NotFound(new { message = "User not found." });
+
+                user.IsLocked = model.IsLocked;
+                await _userRepository.UpdateAsync(user);
+
+                return Ok(new
+                {
+                    message = user.IsLocked ? "Tài khoản đã bị khóa." : "Tài khoản đã được mở khóa.",
+                    userId = user.UserId,
+                    isLocked = user.IsLocked
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = $"Internal server error: {ex.Message}" });
+            }
+        }
     }
 
     // Models
