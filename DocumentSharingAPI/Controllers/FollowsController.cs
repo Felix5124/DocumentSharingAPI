@@ -2,6 +2,7 @@
 using DocumentSharingAPI.Repositories;
 using Microsoft.AspNetCore.Mvc;
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace DocumentSharingAPI.Controllers
@@ -12,18 +13,31 @@ namespace DocumentSharingAPI.Controllers
     {
         private readonly IFollowRepository _followRepository;
         private readonly IUserRepository _userRepository;
-        private readonly INotificationRepository _notificationRepository; // Thêm repository cho thông báo
+        private readonly INotificationRepository _notificationRepository;
+        private readonly IBlobService _blob;
 
         public FollowsController(
             IFollowRepository followRepository,
             IUserRepository userRepository,
-            INotificationRepository notificationRepository) // Inject INotificationRepository
+            INotificationRepository notificationRepository,
+            IBlobService blob)
         {
             _followRepository = followRepository;
             _userRepository = userRepository;
             _notificationRepository = notificationRepository;
+            _blob = blob;
         }
 
+        private string NormalizeAvatar(string avatar)
+        {
+            if (string.IsNullOrEmpty(avatar))
+                return "default-avatar.png";
+            return avatar.StartsWith("avatars/", StringComparison.OrdinalIgnoreCase)
+                ? avatar.Substring("avatars/".Length)
+                : avatar;
+        }
+
+        // Danh sách người theo dõi (followers)
         [HttpGet("followers")]
         public async Task<IActionResult> GetUserFollowers([FromQuery] int followedUserId)
         {
@@ -37,7 +51,59 @@ namespace DocumentSharingAPI.Controllers
                     return NotFound("User not found.");
 
                 var followers = await _followRepository.GetFollowersByUserIdAsync(followedUserId);
-                return Ok(followers);
+
+                // Gắn thông tin user (người theo dõi)
+                var detailed = followers.Select(f =>
+                {
+                    var follower = _userRepository.GetByIdAsync(f.UserId).Result;
+                    return new
+                    {
+                        f.FollowId,
+                        f.UserId,
+                        follower.FullName,
+                        follower.Email,
+                        AvatarUrl = _blob.GetReadSasUrl("avatars", NormalizeAvatar(follower.AvatarUrl), TimeSpan.FromHours(1))
+                    };
+                });
+
+                return Ok(detailed);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Internal server error: {ex.Message}");
+            }
+        }
+
+        // Danh sách người đang theo dõi (following)
+        [HttpGet("following")]
+        public async Task<IActionResult> GetUserFollowing([FromQuery] int userId)
+        {
+            if (userId <= 0)
+                return BadRequest("Invalid user ID.");
+
+            try
+            {
+                var user = await _userRepository.GetByIdAsync(userId);
+                if (user == null)
+                    return NotFound("User not found.");
+
+                var follows = await _followRepository.GetByUserIdAsync(userId);
+
+                var detailed = follows.Select(f =>
+                {
+                    var followed = _userRepository.GetByIdAsync(f.FollowedUserId).Result;
+                    return new
+                    {
+                        f.FollowId,
+                        f.UserId,
+                        f.FollowedUserId,
+                        followed.FullName,
+                        followed.Email,
+                        AvatarUrl = _blob.GetReadSasUrl("avatars", NormalizeAvatar(followed.AvatarUrl), TimeSpan.FromHours(1))
+                    };
+                });
+
+                return Ok(detailed);
             }
             catch (Exception ex)
             {
@@ -50,10 +116,8 @@ namespace DocumentSharingAPI.Controllers
         {
             if (model.UserId == null || model.UserId <= 0)
                 return BadRequest("Invalid user ID.");
-
             if (model.FollowedUserId == null || model.FollowedUserId <= 0)
                 return BadRequest("Must specify a user to follow.");
-
             if (model.UserId == model.FollowedUserId)
                 return BadRequest("Cannot follow yourself.");
 
@@ -78,38 +142,17 @@ namespace DocumentSharingAPI.Controllers
                 };
                 await _followRepository.AddAsync(follow);
 
-                // Tạo thông báo cho người dùng B
+                // Gửi thông báo
                 var notification = new Notification
                 {
-                    UserId = model.FollowedUserId.Value, // Người nhận thông báo (B)
-                    Message = $"{user.Email} đã bắt đầu theo dõi bạn!", // Nội dung thông báo
+                    UserId = model.FollowedUserId.Value,
+                    Message = $"{user.FullName} đã bắt đầu theo dõi bạn!",
                     SentAt = DateTime.Now,
                     IsRead = false
                 };
                 await _notificationRepository.AddAsync(notification);
 
                 return CreatedAtAction(nameof(GetUserFollowers), new { followedUserId = follow.FollowedUserId }, follow);
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, $"Internal server error: {ex.Message}");
-            }
-        }
-
-        [HttpGet]
-        public async Task<IActionResult> GetUserFollowing([FromQuery] int userId)
-        {
-            if (userId <= 0)
-                return BadRequest("Invalid user ID.");
-
-            try
-            {
-                var user = await _userRepository.GetByIdAsync(userId);
-                if (user == null)
-                    return NotFound("User not found.");
-
-                var follows = await _followRepository.GetByUserIdAsync(userId);
-                return Ok(follows);
             }
             catch (Exception ex)
             {

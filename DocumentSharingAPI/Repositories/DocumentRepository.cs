@@ -145,8 +145,8 @@ namespace DocumentSharingAPI.Repositories
                     .ThenInclude(dt => dt.Tag)
                 .AsQueryable();
 
-            // Lọc tài liệu đã duyệt
-            query = query.Where(d => d.IsApproved == true);
+            // Lọc tài liệu đã duyệt và không bị khóa
+            query = query.Where(d => d.IsApproved == true && !d.IsLock);
 
             // Lọc theo từ khóa
             if (!string.IsNullOrEmpty(keyword))
