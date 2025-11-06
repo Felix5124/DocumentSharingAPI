@@ -88,11 +88,15 @@ namespace DocumentSharingAPI.Controllers
         public async Task<IActionResult> GetById(int id)
         {
             var document = await _documentRepository.GetByIdAsync(id);
-            if (document == null)
+
+            // --- LOGIC KIỂM TRA MỚI ---
+            if (document == null || document.IsLock || document.ApprovalStatus == "Suspended")
             {
-                Console.WriteLine($"Document with ID {id} not found.");
-                return NotFound("Tài liệu không tồn tại.");
+                // Nếu không tìm thấy, hoặc tài liệu bị khóa/tạm ngưng, trả về NotFound.
+                Console.WriteLine($"Access denied or not found for Document ID {id}. Status: {document?.ApprovalStatus}, IsLocked: {document?.IsLock}");
+                return NotFound("Tài liệu không tồn tại hoặc đã bị tạm ngưng.");
             }
+            // --- KẾT THÚC LOGIC MỚI ---
 
             var user = await _userRepository.GetByIdAsync(document.UploadedBy);
 
