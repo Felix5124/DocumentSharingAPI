@@ -24,7 +24,7 @@ namespace DocumentSharingAPI.Models
         // THAY THẾ: bool IsApproved bằng ApprovalStatus
         [Required]
         [MaxLength(20)]
-        public string ApprovalStatus { get; set; } = "Pending"; // Các giá trị: "Pending", "SemiApproved", "Approved", "Rejected"
+        public string ApprovalStatus { get; set; } = "Pending"; // Các giá trị: "Pending", "SemiApproved", "Approved", "Rejected", "Suspended"
         
         // THÊM: trường đếm số lượt báo cáo
         public int ReportCount { get; set; } = 0;

@@ -781,8 +781,9 @@ namespace DocumentSharingAPI.Controllers
 
                 // Kiểm tra nếu số lượng report bằng 1/10 số lượng download thì chuyển sang Pending
                 if ((updatedDocument.ApprovalStatus == "SemiApproved" || updatedDocument.ApprovalStatus == "Approved") &&
+                    updatedDocument.ReportCount > 0 && // Chỉ kiểm tra khi có ít nhất 1 báo cáo
                     updatedDocument.DownloadCount > 0 &&
-                    updatedDocument.ReportCount >= (updatedDocument.DownloadCount / 10))
+                    updatedDocument.ReportCount >= (updatedDocument.DownloadCount / 10.0)) // Sử dụng 10.0 để ép kiểu phép chia
                 {
                     updatedDocument.ApprovalStatus = "Pending";
                     await _documentRepository.UpdateAsync(updatedDocument);
@@ -822,6 +823,36 @@ namespace DocumentSharingAPI.Controllers
                 // Hoặc có thể stream file qua API (không khuyến khích cho file lớn)
                 // var stream = await _blob.DownloadAsync("documents", document.FileUrl);
                 // return File(stream, $"application/{document.FileType}", $"{document.Title}.{document.FileType}");
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = $"Lỗi server: {ex.Message}" });
+            }
+        }
+
+        [HttpGet("{id}/admin-download")]
+        public async Task<IActionResult> AdminDownload(int id, [FromQuery] int userId)
+        {
+            try
+            {
+                var document = await _documentRepository.GetByIdAsync(id);
+                if (document == null)
+                    return NotFound(new { message = "Tài liệu không tồn tại." });
+
+                var user = await _userRepository.GetByIdAsync(userId);
+                if (user == null)
+                    return BadRequest(new { message = "Người dùng không tồn tại." });
+
+                // Admin download bypasses approval status and lock checks for review purposes
+                // Only check if document exists and user exists
+
+                // Tạo SAS URL cho download (có thể dùng cách này để redirect)
+                // Loại bỏ prefix "documents/" nếu có để tránh duplicate path
+                var blobPath = document.FileUrl.StartsWith("documents/")
+                    ? document.FileUrl.Substring("documents/".Length)
+                    : document.FileUrl;
+                var sasUrl = _blob.GetReadSasUrl("documents", blobPath, TimeSpan.FromMinutes(10));
+                return Ok(new { url = sasUrl, fileName = $"{document.Title}.{document.FileType}" });
             }
             catch (Exception ex)
             {
@@ -964,12 +995,30 @@ namespace DocumentSharingAPI.Controllers
                 if (document == null)
                     return NotFound("Tài liệu không tồn tại.");
 
-                await _documentRepository.UpdateLockStatusAsync(id, model.IsLocked);
+                // LOGIC MỚI: Dùng IsLocked để điều khiển ApprovalStatus
+                if (model.IsLocked)
+                {
+                    // Hành động "Khóa" sẽ chuyển trạng thái sang "Bị tạm ngưng"
+                    document.ApprovalStatus = "Suspended";
+                    document.IsLock = true; // Giữ IsLock đồng bộ
+                }
+                else
+                {
+                    // Hành động "Mở khóa" sẽ chuyển trạng thái sang "Đã duyệt"
+                    document.ApprovalStatus = "Approved";
+                    document.IsLock = false;
+                }
+
+                await _documentRepository.UpdateAsync(document);
+
+                var notificationMessage = model.IsLocked
+                    ? $"Tài liệu '{document.Title}' của bạn đã bị khóa để xem xét."
+                    : $"Tài liệu '{document.Title}' của bạn đã được mở khóa và duyệt thành công.";
 
                 var notification = new Notification
                 {
                     UserId = document.UploadedBy,
-                    Message = $"Tài liệu '{document.Title}' của bạn đã được {(model.IsLocked ? "khóa" : "mở khóa")}.",
+                    Message = notificationMessage,
                     DocumentId = document.DocumentId,
                     SentAt = DateTime.Now,
                     IsRead = false
@@ -982,15 +1031,15 @@ namespace DocumentSharingAPI.Controllers
                     int countToDelete = currentCount - MaxNotificationsPerUser + 1;
                     await _notificationRepository.DeleteOldestByUserIdAsync(document.UploadedBy, countToDelete);
                 }
-
                 await _notificationRepository.AddAsync(notification);
-                Console.WriteLine($"Document {id} {(model.IsLocked ? "locked" : "unlocked")} and notification sent.");
+                
+                Console.WriteLine($"Document {id} status changed to {document.ApprovalStatus}.");
 
-                return Ok(new { Message = $"Tài liệu đã được {(model.IsLocked ? "khóa" : "mở khóa")} thành công." });
+                return Ok(new { Message = $"Trạng thái tài liệu đã được cập nhật thành '{document.ApprovalStatus}'." });
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error while {(model.IsLocked ? "locking" : "unlocking")} document {id}: {ex.Message}");
+                Console.WriteLine($"Error while changing status for document {id}: {ex.Message}");
                 return StatusCode(500, $"Lỗi server: {ex.Message}");
             }
         }
@@ -1041,8 +1090,9 @@ namespace DocumentSharingAPI.Controllers
                 if (document == null)
                     return NotFound("Tài liệu không tồn tại.");
 
-                // Reset report count và khôi phục trạng thái
+                // Reset report count, download count và khôi phục trạng thái
                 document.ReportCount = 0;
+                document.DownloadCount = 0; // <<< THÊM DÒNG NÀY ĐỂ RESET LƯỢT TẢI
                 if (document.ApprovalStatus == "Pending")
                 {
                     document.ApprovalStatus = "SemiApproved"; // Khôi phục về trạng thái bán duyệt
@@ -1070,7 +1120,7 @@ namespace DocumentSharingAPI.Controllers
 
                 await _notificationRepository.AddAsync(notification);
 
-                return Ok(new { Message = "Đã reset số lượng báo cáo và khôi phục trạng thái tài liệu." });
+                return Ok(new { Message = "Đã reset số lượng báo cáo, lượt tải và khôi phục trạng thái tài liệu." });
             }
             catch (Exception ex)
             {
