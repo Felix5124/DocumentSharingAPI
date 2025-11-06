@@ -1,5 +1,6 @@
 using DocumentSharingAPI.Models;
 using DocumentSharingAPI.Repositories;
+using DocumentSharingAPI.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System;
@@ -16,12 +17,14 @@ namespace DocumentSharingAPI.Controllers
         private readonly AppDbContext _context;
         private readonly IDocumentRepository _documentRepository;
         private readonly INotificationRepository _notificationRepository;
+        private readonly IDocumentStatusService _documentStatusService; // Thêm dòng này
 
-        public ReportsController(AppDbContext context, IDocumentRepository documentRepository, INotificationRepository notificationRepository)
+        public ReportsController(AppDbContext context, IDocumentRepository documentRepository, INotificationRepository notificationRepository, IDocumentStatusService documentStatusService) // Thêm tham số
         {
             _context = context;
             _documentRepository = documentRepository;
             _notificationRepository = notificationRepository;
+            _documentStatusService = documentStatusService; // Thêm dòng này
         }
 
         public class ReportModel
@@ -58,60 +61,8 @@ namespace DocumentSharingAPI.Controllers
             document.ReportCount++;
             await _documentRepository.UpdateAsync(document);
 
-            // Kiểm tra logic báo cáo theo từng giai đoạn lượt tải
-            if ((document.ApprovalStatus == "SemiApproved" || document.ApprovalStatus == "Approved"))
-            {
-                bool shouldChangeToPending = false;
-                
-                // Giai đoạn Mới Tải Lên (0 Lượt tải): Yêu cầu ít nhất 2 báo cáo
-                if (document.DownloadCount == 0 && document.ReportCount >= 2)
-                {
-                    shouldChangeToPending = true;
-                }
-                // Giai đoạn Ban đầu (1 - 20 Lượt tải): Yêu cầu ít nhất 2 báo cáo
-                else if (document.DownloadCount >= 1 && document.DownloadCount <= 20 && document.ReportCount >= 2)
-                {
-                    shouldChangeToPending = true;
-                }
-                // Giai đoạn Phát triển (21 - 100 Lượt tải): Yêu cầu ít nhất 3 báo cáo
-                else if (document.DownloadCount >= 21 && document.DownloadCount <= 100 && document.ReportCount >= 3)
-                {
-                    shouldChangeToPending = true;
-                }
-                // Giai đoạn Tin cậy (> 100 Lượt tải): Yêu cầu 10% lượt tải
-                else if (document.DownloadCount > 100 && document.ReportCount >= (document.DownloadCount / 10))
-                {
-                    shouldChangeToPending = true;
-                }
-                
-                if (shouldChangeToPending)
-                {
-                    document.ApprovalStatus = "Pending";
-                    await _documentRepository.UpdateAsync(document);
-
-                    // Gửi thông báo cho admin
-                    var adminNotification = new Notification
-                    {
-                        UserId = 1, // Giả sử admin có ID = 1
-                        Message = $"Tài liệu '{document.Title}' đã bị chuyển sang trạng thái Pending do có {document.ReportCount} báo cáo.",
-                        DocumentId = document.DocumentId,
-                        SentAt = DateTime.Now,
-                        IsRead = false
-                    };
-                    await _notificationRepository.AddAsync(adminNotification);
-
-                    // Gửi thông báo cho người đăng
-                    var uploaderNotification = new Notification
-                    {
-                        UserId = document.UploadedBy,
-                        Message = $"Tài liệu '{document.Title}' của bạn đã bị chuyển sang trạng thái chờ xử lý do có nhiều báo cáo vi phạm.",
-                        DocumentId = document.DocumentId,
-                        SentAt = DateTime.Now,
-                        IsRead = false
-                    };
-                    await _notificationRepository.AddAsync(uploaderNotification);
-                }
-            }
+            // THAY THẾ TOÀN BỘ KHỐI `if` BẰNG DÒNG SAU:
+            await _documentStatusService.CheckAndPotentiallyDemoteDocumentAsync(document.DocumentId);
 
             await _context.SaveChangesAsync();
 
