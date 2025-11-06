@@ -122,6 +122,7 @@ namespace DocumentSharingAPI.Controllers
         public async Task<IActionResult> GetAllReports()
         {
             var reports = await _context.Reports
+                .Where(r => r.Status == "Pending") // <-- THÊM DÒNG NÀY
                 .Include(r => r.Document)
                 .Include(r => r.User)
                 .Select(r => new
