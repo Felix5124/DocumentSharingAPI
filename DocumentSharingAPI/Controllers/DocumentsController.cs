@@ -28,6 +28,7 @@ namespace DocumentSharingAPI.Controllers
         private readonly AppDbContext _context;
         private readonly IBlobService _blob;
         private readonly IFileValidationService _fileValidationService;
+        private readonly IDocumentStatusService _documentStatusService; // Thêm dòng này
 
         public DocumentsController(
             IDocumentRepository documentRepository,
@@ -39,7 +40,8 @@ namespace DocumentSharingAPI.Controllers
             IFollowRepository followRepository,
             AppDbContext context,
             IBlobService blob,
-            IFileValidationService fileValidationService)
+            IFileValidationService fileValidationService,
+            IDocumentStatusService documentStatusService) // Thêm tham số
         {
             _documentRepository = documentRepository;
             _categoryRepository = categoryRepository;
@@ -51,6 +53,7 @@ namespace DocumentSharingAPI.Controllers
             _context = context;
             _blob = blob;
             _fileValidationService = fileValidationService;
+            _documentStatusService = documentStatusService; // Thêm dòng này
         }
 
         [HttpGet]
@@ -783,37 +786,8 @@ namespace DocumentSharingAPI.Controllers
                     await _notificationRepository.AddAsync(notification);
                 }
 
-                // Kiểm tra nếu số lượng report bằng 1/10 số lượng download thì chuyển sang Pending
-                if ((updatedDocument.ApprovalStatus == "SemiApproved" || updatedDocument.ApprovalStatus == "Approved") &&
-                    updatedDocument.ReportCount > 0 && // Chỉ kiểm tra khi có ít nhất 1 báo cáo
-                    updatedDocument.DownloadCount > 0 &&
-                    updatedDocument.ReportCount >= (updatedDocument.DownloadCount / 10.0)) // Sử dụng 10.0 để ép kiểu phép chia
-                {
-                    updatedDocument.ApprovalStatus = "Pending";
-                    await _documentRepository.UpdateAsync(updatedDocument);
-
-                    // Gửi thông báo cho admin
-                    var adminNotification = new Notification
-                    {
-                        UserId = 1, // Giả sử admin có ID = 1
-                        Message = $"Tài liệu '{updatedDocument.Title}' đã bị chuyển sang trạng thái Pending do có {updatedDocument.ReportCount} báo cáo trên {updatedDocument.DownloadCount} lượt tải.",
-                        DocumentId = updatedDocument.DocumentId,
-                        SentAt = DateTime.Now,
-                        IsRead = false
-                    };
-                    await _notificationRepository.AddAsync(adminNotification);
-
-                    // Gửi thông báo cho người đăng
-                    var uploaderNotification = new Notification
-                    {
-                        UserId = updatedDocument.UploadedBy,
-                        Message = $"Tài liệu '{updatedDocument.Title}' của bạn đã bị chuyển sang trạng thái chờ xử lý do có nhiều báo cáo vi phạm.",
-                        DocumentId = updatedDocument.DocumentId,
-                        SentAt = DateTime.Now,
-                        IsRead = false
-                    };
-                    await _notificationRepository.AddAsync(uploaderNotification);
-                }
+                // THAY THẾ KHỐI `if` KIỂM TRA TỶ LỆ BÁO CÁO BẰNG DÒNG SAU:
+                await _documentStatusService.CheckAndPotentiallyDemoteDocumentAsync(updatedDocument.DocumentId);
                 // --- KẾT THÚC LOGIC TỰ ĐỘNG DUYỆT ---
 
                 // Tạo SAS URL cho download (có thể dùng cách này để redirect)

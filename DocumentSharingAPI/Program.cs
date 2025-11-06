@@ -184,6 +184,9 @@ builder.Services.AddScoped<IGeminiChatService, GeminiChatService>();
 builder.Services.AddSingleton<IBlobService, BlobService>();
 builder.Services.AddScoped<IFileValidationService, FileValidationService>();
 
+// THÊM DÒNG NÀY VÀO
+builder.Services.AddScoped<IDocumentStatusService, DocumentStatusService>();
+
 
 
 // Swagger Configuration
