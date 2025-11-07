@@ -101,6 +101,11 @@ namespace DocumentSharingAPI.Repositories
             return await _context.Documents.Where(d => d.ApprovalStatus == "Pending").ToListAsync();
         }
 
+        public async Task<IEnumerable<Document>> GetSemiApprovedDocumentsAsync()
+        {
+            return await _context.Documents.Where(d => d.ApprovalStatus == "SemiApproved").ToListAsync();
+        }
+
         public async Task ApproveDocumentAsync(int id)
         {
             var document = await _context.Documents.FindAsync(id);
