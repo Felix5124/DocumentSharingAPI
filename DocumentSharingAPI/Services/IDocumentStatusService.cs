@@ -13,5 +13,14 @@ namespace DocumentSharingAPI.Services
         /// <param name="documentId">ID của tài liệu cần kiểm tra.</param>
         /// <returns>Task</returns>
         Task CheckAndPotentiallyDemoteDocumentAsync(int documentId);
+        
+        /// <summary>
+        /// Kiểm tra tài liệu dựa trên số lượt tải và báo cáo,
+        /// và tự động duyệt tài liệu nếu đủ điều kiện.
+        /// Đồng thời gửi thông báo cho người đăng.
+        /// </summary>
+        /// <param name="documentId">ID của tài liệu cần kiểm tra.</param>
+        /// <returns>Task</returns>
+        Task CheckAndPotentiallyPromoteDocumentAsync(int documentId);
     }
 }

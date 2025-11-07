@@ -88,7 +88,7 @@ namespace DocumentSharingAPI.Controllers
         }
 
         [HttpGet("{id:int}")]
-        public async Task<IActionResult> GetById(int id)
+        public async Task<IActionResult> GetById(int id, [FromQuery] int? userId) // Thêm userId tùy chọn từ query
         {
             var document = await _documentRepository.GetByIdAsync(id);
 
@@ -103,6 +103,20 @@ namespace DocumentSharingAPI.Controllers
 
             var user = await _userRepository.GetByIdAsync(document.UploadedBy);
 
+            // --- BẮT ĐẦU THAY ĐỔI ---
+            bool hasReported = false;
+            if (userId.HasValue && userId.Value > 0)
+            {
+                // --- THAY ĐỔI LOGIC TẠI ĐÂY ---
+                // Chỉ coi là "đã báo cáo" nếu có báo cáo đang chờ hoặc đã được xử lý (chưa bị từ chối)
+                hasReported = await _context.Reports
+                    .AnyAsync(r => r.ReporterUserId == userId.Value &&
+                                   r.DocumentId == id &&
+                                   r.Status != "Rejected");
+            }
+            // --- KẾT THÚC THAY ĐỔI ---
+
+            // Thêm `hasReported` vào đối tượng trả về
             return Ok(new
             {
                 document.DocumentId,
@@ -125,7 +139,8 @@ namespace DocumentSharingAPI.Controllers
                 ReportCount = document.ReportCount,
                 document.IsLock,
                 document.Comments,
-                document.UserDocuments
+                document.UserDocuments,
+                HasReported = hasReported // <-- TRƯỜNG DỮ LIỆU MỚI
             });
         }
 
@@ -594,6 +609,13 @@ namespace DocumentSharingAPI.Controllers
             return Ok(documents);
         }
 
+        [HttpGet("semiapproved")]
+        public async Task<IActionResult> GetSemiApproved()
+        {
+            var documents = await _documentRepository.GetSemiApprovedDocumentsAsync();
+            return Ok(documents);
+        }
+
         // Cập nhật endpoint Approve
         [HttpPut("{id}/approve")]
         public async Task<IActionResult> Approve(int id)
@@ -760,35 +782,15 @@ namespace DocumentSharingAPI.Controllers
 
                 await _context.SaveChangesAsync();
 
-                // --- BẮT ĐẦU LOGIC TỰ ĐỘNG DUYỆT ---
-                const int downloadThresholdForApproval = 10; // Cấu hình ngưỡng ở đây hoặc trong appsettings.json
-                
+                // --- THAY THẾ KHỐI LOGIC CŨ ---
                 // Tải lại thông tin document sau khi tăng DownloadCount
                 var updatedDocument = await _documentRepository.GetByIdAsync(id);
 
-                // Kiểm tra auto-approval
-                if (updatedDocument.ApprovalStatus == "SemiApproved" &&
-                    updatedDocument.DownloadCount >= downloadThresholdForApproval &&
-                    updatedDocument.ReportCount == 0)
-                {
-                    updatedDocument.ApprovalStatus = "Approved";
-                    await _documentRepository.UpdateAsync(updatedDocument);
-
-                    // Gửi thông báo cho người đăng
-                    var notification = new Notification
-                    {
-                        UserId = updatedDocument.UploadedBy,
-                        Message = $"Tài liệu '{updatedDocument.Title}' của bạn đã được tự động duyệt sau khi đạt {downloadThresholdForApproval} lượt tải.",
-                        DocumentId = updatedDocument.DocumentId,
-                        SentAt = DateTime.Now,
-                        IsRead = false
-                    };
-                    await _notificationRepository.AddAsync(notification);
-                }
-
-                // THAY THẾ KHỐI `if` KIỂM TRA TỶ LỆ BÁO CÁO BẰNG DÒNG SAU:
+                // --- BẰNG LỜI GỌI SERVICE MỚI ---
+                // Tự động kiểm tra để duyệt hoặc hạ cấp tài liệu
+                await _documentStatusService.CheckAndPotentiallyPromoteDocumentAsync(updatedDocument.DocumentId);
                 await _documentStatusService.CheckAndPotentiallyDemoteDocumentAsync(updatedDocument.DocumentId);
-                // --- KẾT THÚC LOGIC TỰ ĐỘNG DUYỆT ---
+                // --- KẾT THÚC THAY THẾ ---
 
                 // Tạo SAS URL cho download (có thể dùng cách này để redirect)
                 // Loại bỏ prefix "documents/" nếu có để tránh duplicate path
@@ -1068,17 +1070,36 @@ namespace DocumentSharingAPI.Controllers
                 if (document == null)
                     return NotFound("Tài liệu không tồn tại.");
 
-                // Reset report count, download count và khôi phục trạng thái
+                // --- BẮT ĐẦU THAY ĐỔI ---
+
+                // 1. Tìm tất cả các báo cáo "Pending" liên quan đến tài liệu này
+                var pendingReports = await _context.Reports
+                    .Where(r => r.DocumentId == id && r.Status == "Pending")
+                    .ToListAsync();
+
+                // 2. Cập nhật trạng thái của chúng thành "Rejected"
+                if (pendingReports.Any())
+                {
+                    foreach (var report in pendingReports)
+                    {
+                        report.Status = "Rejected";
+                    }
+                }
+                
+                // --- KẾT THÚC THAY ĐỔI ---
+
+                // Reset report count và download count, khôi phục trạng thái (giữ nguyên)
                 document.ReportCount = 0;
-                document.DownloadCount = 0; // <<< THÊM DÒNG NÀY ĐỂ RESET LƯỢT TẢI
+                document.DownloadCount = 0;
                 if (document.ApprovalStatus == "Pending")
                 {
-                    document.ApprovalStatus = "SemiApproved"; // Khôi phục về trạng thái bán duyệt
+                    document.ApprovalStatus = "SemiApproved";
                 }
 
-                await _documentRepository.UpdateAsync(document);
+                // Lưu tất cả các thay đổi vào DB
+                await _context.SaveChangesAsync();
 
-                // Gửi thông báo cho người đăng
+                // Gửi thông báo cho người đăng (giữ nguyên)
                 var notification = new Notification
                 {
                     UserId = document.UploadedBy,
@@ -1098,7 +1119,7 @@ namespace DocumentSharingAPI.Controllers
 
                 await _notificationRepository.AddAsync(notification);
 
-                return Ok(new { Message = "Đã reset số lượng báo cáo, lượt tải và khôi phục trạng thái tài liệu." });
+                return Ok(new { Message = "Đã từ chối các báo cáo đang chờ, khôi phục trạng thái tài liệu và reset số lượt tải." });
             }
             catch (Exception ex)
             {

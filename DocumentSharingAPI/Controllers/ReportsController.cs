@@ -45,6 +45,24 @@ namespace DocumentSharingAPI.Controllers
             if (document == null)
                 return NotFound("Tài liệu không tồn tại.");
 
+            if (document.ApprovalStatus == "Pending")
+                return BadRequest(new { message = "Không thể báo cáo tài liệu đang chờ duyệt." });
+
+            // --- BẮT ĐẦU THAY ĐỔI ---
+            // Kiểm tra xem người dùng có báo cáo nào đang hoạt động (chưa bị từ chối) cho tài liệu này không.
+            var existingReport = await _context.Reports
+                .FirstOrDefaultAsync(r =>
+                    r.ReporterUserId == model.ReporterUserId &&
+                    r.DocumentId == model.DocumentId &&
+                    r.Status != "Rejected"); // <-- THÊM ĐIỀU KIỆN QUAN TRỌNG NÀY
+
+            if (existingReport != null)
+            {
+                // Nếu đã tồn tại báo cáo đang chờ hoặc đã được xử lý, trả về lỗi.
+                return Conflict(new { message = "Bạn đã có một báo cáo đang chờ xử lý cho tài liệu này." });
+            }
+            // --- KẾT THÚC THAY ĐỔI ---
+
             var report = new Report
             {
                 DocumentId = model.DocumentId,
