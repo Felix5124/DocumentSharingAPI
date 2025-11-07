@@ -223,10 +223,19 @@ namespace DocumentSharingAPI.Controllers
                 }
 
                 // Xóa ảnh cũ nếu có và không phải ảnh mặc định
-                if (!string.IsNullOrEmpty(document.CoverImageUrl) &&
-                    !document.CoverImageUrl.EndsWith("default-file.png", StringComparison.OrdinalIgnoreCase))
+                if (!string.IsNullOrEmpty(document.CoverImageUrl))
                 {
-                    await _blob.DeleteAsync("covers", document.CoverImageUrl.Replace("covers/", ""));
+                    var path = document.CoverImageUrl.Trim();
+                    var blobName = NormalizeCoverBlobName(path);
+                    if (IsUserUploadedCover(blobName))
+                    {
+                        await _blob.DeleteAsync("covers", blobName);
+                        Console.WriteLine($"[Update] Deleted old cover blob: {blobName}");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[Update] Skip deleting non-upload cover: {blobName}");
+                    }
                 }
 
                 // Upload ảnh mới
@@ -342,10 +351,19 @@ namespace DocumentSharingAPI.Controllers
                     Console.WriteLine($"Deleted document blob: {document.FileUrl}");
                 }
 
-                if (!string.IsNullOrEmpty(document.CoverImageUrl) &&
-    !document.CoverImageUrl.EndsWith("default-file.png", StringComparison.OrdinalIgnoreCase))
+                if (!string.IsNullOrEmpty(document.CoverImageUrl))
                 {
-                    await _blob.DeleteAsync("covers", document.CoverImageUrl.Replace("covers/", ""));
+                    var path = document.CoverImageUrl.Trim();
+                    var blobName = NormalizeCoverBlobName(path);
+                    if (IsUserUploadedCover(blobName))
+                    {
+                        await _blob.DeleteAsync("covers", blobName);
+                        Console.WriteLine($"[Delete] Deleted cover blob: {blobName}");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[Delete] Skip deleting non-upload cover: {blobName}");
+                    }
                 }
 
 
@@ -431,7 +449,7 @@ namespace DocumentSharingAPI.Controllers
 
 
             // Upload ảnh bìa lên Azure Blob
-            string coverImageUrl = null;
+            string? coverImageUrl = null;
             if (model.CoverImage != null && model.CoverImage.Length > 0)
             {
                 var allowedImageExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".tiff", ".tif", ".heic", ".heif" };
@@ -1159,6 +1177,53 @@ namespace DocumentSharingAPI.Controllers
                 ".txt" => "text/plain",
                 _ => "application/octet-stream"
             };
+        }
+
+        private bool IsDefaultCover(string coverUrl)
+        {
+            if (string.IsNullOrWhiteSpace(coverUrl)) return true;
+            // Normalize: strip known prefix
+            var name = coverUrl.StartsWith("covers/", StringComparison.OrdinalIgnoreCase)
+                ? coverUrl.Substring("covers/".Length)
+                : coverUrl;
+
+            // Known default names used in the app
+            return name.Equals("default-cover.png", StringComparison.OrdinalIgnoreCase)
+                   || name.Equals("default-file.png", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private string NormalizeCoverBlobName(string coverUrl)
+        {
+            if (string.IsNullOrWhiteSpace(coverUrl)) return string.Empty;
+            // strip query
+            var withoutQuery = coverUrl.Split('?')[0];
+            // strip container prefix
+            var path = withoutQuery.StartsWith("covers/", StringComparison.OrdinalIgnoreCase)
+                ? withoutQuery.Substring("covers/".Length)
+                : withoutQuery;
+            // trim leading slash just in case
+            path = path.TrimStart('/');
+            return path;
+        }
+
+        private bool IsUserUploadedCover(string blobName)
+        {
+            if (string.IsNullOrWhiteSpace(blobName)) return false;
+            // Only delete if it matches our uploaded naming pattern: 32-hex guid + extension
+            // e.g., a1b2c3...32 chars... .jpg
+            var name = Path.GetFileName(blobName);
+            var dot = name.LastIndexOf('.');
+            if (dot <= 0) return false;
+            var baseName = name.Substring(0, dot);
+            if (baseName.Length != 32) return false;
+            for (int i = 0; i < 32; i++)
+            {
+                char c = baseName[i];
+                bool isHex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+                if (!isHex) return false;
+            }
+            // Passed heuristic; treat as user-uploaded cover
+            return true;
         }
     }
 
