@@ -62,9 +62,37 @@ namespace DocumentSharingAPI.Controllers
             var documents = await _documentRepository.GetAllAsync();
             var result = new List<object>();
 
+            // === BẮT ĐẦU THAY ĐỔI ===
+            // Lấy danh sách ID của tất cả tài liệu để truy vấn hiệu quả
+            var documentIds = documents.Select(d => d.DocumentId).ToList();
+
+            // Truy vấn được cập nhật để loại trừ lượt tải của chính người đăng
+            var uniqueDownloadCounts = await _context.UserDocuments
+                .Where(ud => documentIds.Contains(ud.DocumentId) && ud.ActionType == "Download")
+                // Join với bảng Documents để lấy thông tin UploadedBy
+                .Join(_context.Documents,
+                      ud => ud.DocumentId,
+                      doc => doc.DocumentId,
+                      (ud, doc) => new { UserDocument = ud, Document = doc })
+                // Điều kiện quan trọng: Lọc ra những lượt tải không phải của người đăng
+                .Where(joined => joined.UserDocument.UserId != joined.Document.UploadedBy)
+                .GroupBy(joined => joined.Document.DocumentId)
+                .Select(g => new
+                {
+                    DocumentId = g.Key,
+                    // Đếm số UserId duy nhất còn lại
+                    UniqueCount = g.Select(j => j.UserDocument.UserId).Distinct().Count()
+                })
+                .ToDictionaryAsync(x => x.DocumentId, x => x.UniqueCount);
+            // === KẾT THÚC THAY ĐỔI ===
+
             foreach (var d in documents)
             {
                 var user = await _userRepository.GetByIdAsync(d.UploadedBy);
+                
+                // Lấy số lượt tải duy nhất từ dictionary đã tạo
+                int uniqueDownloads = uniqueDownloadCounts.GetValueOrDefault(d.DocumentId, 0);
+
                 result.Add(new
                 {
                     d.DocumentId,
@@ -73,7 +101,8 @@ namespace DocumentSharingAPI.Controllers
                     d.Description,
                     d.CoverImageUrl,
                     d.UploadedAt,
-                    d.DownloadCount,
+                    d.DownloadCount, // Đây là tổng lượt tải
+                    UniqueDownloadCount = uniqueDownloads, // Đây là lượt tải thực tế (duy nhất)
                     d.FileType,
                     d.IsVipOnly,
                     ApprovalStatus = d.ApprovalStatus,
@@ -782,33 +811,41 @@ namespace DocumentSharingAPI.Controllers
                     }
                 }
 
-                // Cập nhật số lượt download đã sử dụng (bao gồm cả việc trừ bonus downloads nếu cần)
-                await _userRepository.UpdateDownloadCountsAsync(userId, document.IsVipOnly);
-                await _documentRepository.IncrementDownloadCountAsync(id);
-
-                var userDocument = await _userDocumentRepository.GetByUserIdDocumentIdAndActionAsync(userId, id, "Download");
-                if (userDocument == null)
+                // CHỈ TĂNG LƯỢT TẢI VÀ CẬP NHẬT LỊCH SỬ NẾU NGƯỜI TẢI KHÔNG PHẢI CHỦ SỞ HỮU
+                if (user.UserId != document.UploadedBy)
                 {
-                    await _userDocumentRepository.AddAsync(new UserDocument
+                    await _userRepository.UpdateDownloadCountsAsync(userId, document.IsVipOnly);
+                    await _documentRepository.IncrementDownloadCountAsync(id);
+
+                    var userDocument = await _userDocumentRepository.GetByUserIdDocumentIdAndActionAsync(userId, id, "Download");
+                    if (userDocument == null)
                     {
-                        UserId = userId,
-                        DocumentId = id,
-                        ActionType = "Download",
-                        AddedAt = DateTime.Now
-                    });
+                        await _userDocumentRepository.AddAsync(new UserDocument
+                        {
+                            UserId = userId,
+                            DocumentId = id,
+                            ActionType = "Download",
+                            AddedAt = DateTime.Now
+                        });
+                    }
+
+                    await _context.SaveChangesAsync();
+
+                    // --- THAY THẾ KHỐI LOGIC CŨ ---
+                    // Tải lại thông tin document sau khi tăng DownloadCount
+                    var updatedDocument = await _documentRepository.GetByIdAsync(id);
+
+                    // --- BẰNG LỜI GỌI SERVICE MỚI ---
+                    // Tự động kiểm tra để duyệt hoặc hạ cấp tài liệu
+                    await _documentStatusService.CheckAndPotentiallyPromoteDocumentAsync(updatedDocument.DocumentId);
+                    await _documentStatusService.CheckAndPotentiallyDemoteDocumentAsync(updatedDocument.DocumentId);
+                    // --- KẾT THÚC THAY THẾ ---
                 }
-
-                await _context.SaveChangesAsync();
-
-                // --- THAY THẾ KHỐI LOGIC CŨ ---
-                // Tải lại thông tin document sau khi tăng DownloadCount
-                var updatedDocument = await _documentRepository.GetByIdAsync(id);
-
-                // --- BẰNG LỜI GỌI SERVICE MỚI ---
-                // Tự động kiểm tra để duyệt hoặc hạ cấp tài liệu
-                await _documentStatusService.CheckAndPotentiallyPromoteDocumentAsync(updatedDocument.DocumentId);
-                await _documentStatusService.CheckAndPotentiallyDemoteDocumentAsync(updatedDocument.DocumentId);
-                // --- KẾT THÚC THAY THẾ ---
+                else
+                {
+                    // Nếu người tải là chủ sở hữu, vẫn cho phép tải nhưng không tăng lượt tải
+                    await _context.SaveChangesAsync();
+                }
 
                 // Tạo SAS URL cho download (có thể dùng cách này để redirect)
                 // Loại bỏ prefix "documents/" nếu có để tránh duplicate path
@@ -1007,8 +1044,19 @@ namespace DocumentSharingAPI.Controllers
                     document.ApprovalStatus = "SemiApproved";
                     document.IsLock = false;
 
-                    // Reset số lượt báo cáo vì admin đã xử lý chúng
+                    // Reset số lượt báo cáo và tải xuống vì admin đã xử lý chúng
                     document.ReportCount = 0;
+                    document.DownloadCount = 0;
+
+                    // Xóa lịch sử tải xuống (UserDocuments) để reset unique download count
+                    var downloadHistory = await _context.UserDocuments
+                        .Where(ud => ud.DocumentId == id && ud.ActionType == "Download")
+                        .ToListAsync();
+
+                    if (downloadHistory.Any())
+                    {
+                        _context.UserDocuments.RemoveRange(downloadHistory);
+                    }
 
                     // Cập nhật trạng thái của các báo cáo đang hoạt động (Pending và Resolved) thành "Bị từ chối"
                     var activeReports = await _context.Reports
@@ -1319,3 +1367,4 @@ namespace DocumentSharingAPI.Controllers
 
 
 }
+
