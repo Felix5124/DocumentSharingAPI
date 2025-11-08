@@ -987,6 +987,7 @@ namespace DocumentSharingAPI.Controllers
         [HttpPut("{id}/lock")]
         public async Task<IActionResult> LockUnlockDocument(int id, [FromBody] LockDocumentModel model)
         {
+            await using var transaction = await _context.Database.BeginTransactionAsync();
             try
             {
                 var document = await _documentRepository.GetByIdAsync(id);
@@ -1002,16 +1003,33 @@ namespace DocumentSharingAPI.Controllers
                 }
                 else
                 {
-                    // Hành động "Mở khóa" sẽ chuyển trạng thái sang "Đã duyệt"
-                    document.ApprovalStatus = "Approved";
+                    // Hành động "Mở khóa" sẽ chuyển trạng thái sang "Bán duyệt"
+                    document.ApprovalStatus = "SemiApproved";
                     document.IsLock = false;
-                }
 
-                await _documentRepository.UpdateAsync(document);
+                    // Reset số lượt báo cáo vì admin đã xử lý chúng
+                    document.ReportCount = 0;
+
+                    // Cập nhật trạng thái của các báo cáo đang hoạt động (Pending và Resolved) thành "Bị từ chối"
+                    var activeReports = await _context.Reports
+                        .Where(r => r.DocumentId == id && (r.Status == "Pending" || r.Status == "Resolved"))
+                        .ToListAsync();
+
+                    if (activeReports.Any())
+                    {
+                        foreach (var report in activeReports)
+                        {
+                            report.Status = "Rejected";
+                        }
+                    }
+                }
+                
+                // Chỉ đánh dấu là đã thay đổi, không gọi SaveChanges
+                _context.Documents.Update(document);
 
                 var notificationMessage = model.IsLocked
                     ? $"Tài liệu '{document.Title}' của bạn đã bị khóa để xem xét."
-                    : $"Tài liệu '{document.Title}' của bạn đã được mở khóa và duyệt thành công.";
+                    : $"Tài liệu '{document.Title}' của bạn đã được mở khóa và chuyển về trạng thái cần cộng đồng xác thực.";
 
                 var notification = new Notification
                 {
@@ -1022,21 +1040,30 @@ namespace DocumentSharingAPI.Controllers
                     IsRead = false
                 };
 
+                // Kiểm tra và xóa thông báo cũ nếu cần
                 const int MaxNotificationsPerUser = 100;
                 var currentCount = await _notificationRepository.CountByUserIdAsync(document.UploadedBy);
                 if (currentCount >= MaxNotificationsPerUser)
                 {
                     int countToDelete = currentCount - MaxNotificationsPerUser + 1;
+                    // Note: DeleteOldestByUserIdAsync cũng gọi SaveChangesAsync, cần xem xét tạo phiên bản transaction
+                    // Tạm thời giữ nguyên vì nó chỉ xóa thông báo cũ, không ảnh hưởng đến logic chính
                     await _notificationRepository.DeleteOldestByUserIdAsync(document.UploadedBy, countToDelete);
                 }
-                await _notificationRepository.AddAsync(notification);
                 
+                // Sử dụng phương thức mới không tự động lưu
+                await _notificationRepository.AddForTransactionAsync(notification);
+                
+                await _context.SaveChangesAsync();
+                await transaction.CommitAsync();
+
                 Console.WriteLine($"Document {id} status changed to {document.ApprovalStatus}.");
 
                 return Ok(new { Message = $"Trạng thái tài liệu đã được cập nhật thành '{document.ApprovalStatus}'." });
             }
             catch (Exception ex)
             {
+                await transaction.RollbackAsync();
                 Console.WriteLine($"Error while changing status for document {id}: {ex.Message}");
                 return StatusCode(500, $"Lỗi server: {ex.Message}");
             }
@@ -1082,42 +1109,39 @@ namespace DocumentSharingAPI.Controllers
         [HttpPut("{id}/reset-reports")]
         public async Task<IActionResult> ResetReportCount(int id)
         {
+            // Bắt đầu một transaction
+            await using var transaction = await _context.Database.BeginTransactionAsync();
+
             try
             {
                 var document = await _documentRepository.GetByIdAsync(id);
                 if (document == null)
                     return NotFound("Tài liệu không tồn tại.");
 
-                // --- BẮT ĐẦU THAY ĐỔI ---
-
-                // 1. Tìm tất cả các báo cáo "Pending" liên quan đến tài liệu này
-                var pendingReports = await _context.Reports
-                    .Where(r => r.DocumentId == id && r.Status == "Pending")
+                // 1. Cập nhật trạng thái các báo cáo liên quan
+                var activeReports = await _context.Reports
+                    .Where(r => r.DocumentId == id && (r.Status == "Pending" || r.Status == "Resolved"))
                     .ToListAsync();
 
-                // 2. Cập nhật trạng thái của chúng thành "Rejected"
-                if (pendingReports.Any())
+                if (activeReports.Any())
                 {
-                    foreach (var report in pendingReports)
+                    foreach (var report in activeReports)
                     {
                         report.Status = "Rejected";
                     }
+                    // Không cần SaveChanges() ở đây
                 }
-                
-                // --- KẾT THÚC THAY ĐỔI ---
 
-                // Reset report count và download count, khôi phục trạng thái (giữ nguyên)
+                // 2. Cập nhật tài liệu
                 document.ReportCount = 0;
-                document.DownloadCount = 0;
                 if (document.ApprovalStatus == "Pending")
                 {
                     document.ApprovalStatus = "SemiApproved";
                 }
+                // Chỉ đánh dấu là đã thay đổi, không gọi SaveChanges
+                _context.Documents.Update(document);
 
-                // Lưu tất cả các thay đổi vào DB
-                await _context.SaveChangesAsync();
-
-                // Gửi thông báo cho người đăng (giữ nguyên)
+                // 3. Tạo và thêm thông báo (sử dụng phương thức mới)
                 var notification = new Notification
                 {
                     UserId = document.UploadedBy,
@@ -1126,23 +1150,37 @@ namespace DocumentSharingAPI.Controllers
                     SentAt = DateTime.Now,
                     IsRead = false
                 };
-
+                
+                // Kiểm tra và xóa thông báo cũ nếu cần
                 const int MaxNotificationsPerUser = 100;
                 var currentCount = await _notificationRepository.CountByUserIdAsync(document.UploadedBy);
                 if (currentCount >= MaxNotificationsPerUser)
                 {
                     int countToDelete = currentCount - MaxNotificationsPerUser + 1;
+                    // Note: DeleteOldestByUserIdAsync cũng gọi SaveChangesAsync, cần xem xét tạo phiên bản transaction
+                    // Tạm thời giữ nguyên vì nó chỉ xóa thông báo cũ, không ảnh hưởng đến logic chính
                     await _notificationRepository.DeleteOldestByUserIdAsync(document.UploadedBy, countToDelete);
                 }
+                
+                // Sử dụng phương thức mới không tự động lưu
+                await _notificationRepository.AddForTransactionAsync(notification);
 
-                await _notificationRepository.AddAsync(notification);
+                // 4. Lưu tất cả các thay đổi trong transaction
+                await _context.SaveChangesAsync();
 
-                return Ok(new { Message = "Đã từ chối các báo cáo đang chờ, khôi phục trạng thái tài liệu và reset số lượt tải." });
+                // 5. Nếu mọi thứ thành công, commit transaction
+                await transaction.CommitAsync();
+
+                return Ok(new { Message = "Đã từ chối các báo cáo đang chờ và khôi phục trạng thái tài liệu thành công. Số lượt tải được giữ nguyên." });
             }
             catch (Exception ex)
             {
+                // 6. Nếu có lỗi, rollback tất cả thay đổi
+                await transaction.RollbackAsync();
+                
                 Console.WriteLine($"Error resetting report count for document {id}: {ex.Message}");
-                return StatusCode(500, $"Lỗi server: {ex.Message}");
+                // Ghi log lỗi chi tiết (sử dụng ILogger)
+                return StatusCode(500, $"Lỗi server: Đã xảy ra lỗi không mong muốn và các thay đổi đã được hoàn tác.");
             }
         }
 
