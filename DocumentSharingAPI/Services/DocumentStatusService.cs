@@ -1,6 +1,7 @@
 // DocumentSharingAPI/Services/DocumentStatusService.cs
 using DocumentSharingAPI.Models;
 using DocumentSharingAPI.Repositories;
+using Microsoft.EntityFrameworkCore;
 using System;
 using System.Linq;
 using System.Threading.Tasks;
@@ -12,13 +13,15 @@ namespace DocumentSharingAPI.Services
         private readonly IDocumentRepository _documentRepository;
         private readonly INotificationRepository _notificationRepository;
         private readonly IUserRepository _userRepository;
+        private readonly AppDbContext _context;
 
 
-        public DocumentStatusService(IDocumentRepository documentRepository, INotificationRepository notificationRepository, IUserRepository userRepository)
+        public DocumentStatusService(IDocumentRepository documentRepository, INotificationRepository notificationRepository, IUserRepository userRepository, AppDbContext context)
         {
             _documentRepository = documentRepository;
             _notificationRepository = notificationRepository;
             _userRepository = userRepository;
+            _context = context;
         }
 
         public async Task CheckAndPotentiallyDemoteDocumentAsync(int documentId)
@@ -34,10 +37,17 @@ namespace DocumentSharingAPI.Services
 
             if (document.ApprovalStatus == "SemiApproved")
             {
-                // GIỮ NGUYÊN LOGIC CŨ cho tài liệu chưa được duyệt hoàn toàn
-                if ((document.DownloadCount <= 20 && document.ReportCount >= 2) ||
-                    (document.DownloadCount > 20 && document.DownloadCount <= 100 && document.ReportCount >= 3) ||
-                    (document.DownloadCount > 100 && document.ReportCount >= (document.DownloadCount / 10.0)))
+                // Đếm số người dùng duy nhất đã tải tài liệu này
+                int uniqueDownloads = await _context.UserDocuments
+                    .Where(ud => ud.DocumentId == documentId && ud.ActionType == "Download")
+                    .Select(ud => ud.UserId)
+                    .Distinct()
+                    .CountAsync();
+
+                // GIỮ NGUYÊN LOGIC CŨ cho tài liệu chưa được duyệt hoàn toàn, nhưng sử dụng uniqueDownloads
+                if ((uniqueDownloads <= 20 && document.ReportCount >= 2) ||
+                    (uniqueDownloads > 20 && uniqueDownloads <= 100 && document.ReportCount >= 3) ||
+                    (uniqueDownloads > 100 && document.ReportCount >= (uniqueDownloads / 10.0)))
                 {
                     shouldChangeToPending = true;
                 }
@@ -46,12 +56,19 @@ namespace DocumentSharingAPI.Services
             {
                 // === BẮT ĐẦU LOGIC CẢI TIẾN CHO TÀI LIỆU ĐÃ DUYỆT ===
 
+                // Đếm số người dùng duy nhất đã tải tài liệu này
+                int uniqueDownloads = await _context.UserDocuments
+                    .Where(ud => ud.DocumentId == documentId && ud.ActionType == "Download")
+                    .Select(ud => ud.UserId)
+                    .Distinct()
+                    .CountAsync();
+
                 // 1. Ngưỡng cơ bản là 10 báo cáo
                 const int baseReportThreshold = 10;
 
                 const int downloadsPerExtraReport = 10;
-                int dynamicThreshold = baseReportThreshold + (document.DownloadCount / downloadsPerExtraReport);
-                //vd số download =50 thì 10 + (50 / 10) = 15 (15 report -> pending)
+                int dynamicThreshold = baseReportThreshold + (uniqueDownloads / downloadsPerExtraReport);
+                //vd số unique download =50 thì 10 + (50 / 10) = 15 (15 report -> pending)
                 // So sánh số báo cáo hiện tại với ngưỡng linh động
                 if (document.ReportCount >= dynamicThreshold)
                 {
@@ -106,12 +123,19 @@ namespace DocumentSharingAPI.Services
             }
 
             bool shouldBeApproved = false;
-            int downloads = document.DownloadCount;
+            
+            // Đếm số người dùng duy nhất đã tải tài liệu này
+            int uniqueDownloads = await _context.UserDocuments
+                .Where(ud => ud.DocumentId == documentId && ud.ActionType == "Download")
+                .Select(ud => ud.UserId)
+                .Distinct()
+                .CountAsync();
+
             int reports = document.ReportCount;
 
             // --- LOGIC LINH HOẠT ---
             // Giai đoạn 1: Dưới 50 lượt tải -> Yêu cầu tuyệt đối không có báo cáo
-            if (downloads >= 10 && downloads <= 50)
+            if (uniqueDownloads >= 10 && uniqueDownloads <= 50)
             {
                 if (reports == 0)
                 {
@@ -119,7 +143,7 @@ namespace DocumentSharingAPI.Services
                 }
             }
             // Giai đoạn 2: Từ 51 đến 200 lượt tải -> Chấp nhận 1 báo cáo
-            else if (downloads > 50 && downloads <= 200)
+            else if (uniqueDownloads > 50 && uniqueDownloads <= 200)
             {
                 if (reports <= 1)
                 {
@@ -127,9 +151,9 @@ namespace DocumentSharingAPI.Services
                 }
             }
             // Giai đoạn 3: Trên 200 lượt tải -> Xét theo tỷ lệ (ví dụ: tỷ lệ báo cáo < 2%)
-            else if (downloads > 200)
+            else if (uniqueDownloads > 200)
             {
-                double reportRatio = (double)reports / downloads;
+                double reportRatio = (double)reports / uniqueDownloads;
                 if (reportRatio < 0.02) // Chấp nhận dưới 2% báo cáo
                 {
                     shouldBeApproved = true;
