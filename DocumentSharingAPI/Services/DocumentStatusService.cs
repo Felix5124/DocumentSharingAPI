@@ -45,9 +45,12 @@ namespace DocumentSharingAPI.Services
                     .CountAsync();
 
                 // GIỮ NGUYÊN LOGIC CŨ cho tài liệu chưa được duyệt hoàn toàn, nhưng sử dụng uniqueDownloads
-                if ((uniqueDownloads <= 20 && document.ReportCount >= 2) ||
-                    (uniqueDownloads > 20 && uniqueDownloads <= 100 && document.ReportCount >= 3) ||
-                    (uniqueDownloads > 100 && document.ReportCount >= (uniqueDownloads / 10.0)))
+                // [0-1] download + từ 1 report trở lên
+                // [3-5] download + từ 2 report trở lên
+                // [6-...] download + từ [6+...] report trở lên
+                if ((uniqueDownloads <= 1 && document.ReportCount >= 1) ||
+                    (uniqueDownloads > 2 && uniqueDownloads <= 5 && document.ReportCount >= 2) ||
+                    (uniqueDownloads > 5 && document.ReportCount >= (uniqueDownloads / 1.0)))
                 {
                     shouldChangeToPending = true;
                 }
@@ -64,10 +67,11 @@ namespace DocumentSharingAPI.Services
                     .CountAsync();
 
                 // 1. Ngưỡng cơ bản là 10 báo cáo
-                const int baseReportThreshold = 10;
+                const int baseReportThreshold = 1;
 
-                const int downloadsPerExtraReport = 10;
+                const int downloadsPerExtraReport = 1;
                 int dynamicThreshold = baseReportThreshold + (uniqueDownloads / downloadsPerExtraReport);
+                // 1 + (5 / 1) = 6
                 //vd số unique download =50 thì 10 + (50 / 10) = 15 (15 report -> pending)
                 // So sánh số báo cáo hiện tại với ngưỡng linh động
                 if (document.ReportCount >= dynamicThreshold)
@@ -135,7 +139,8 @@ namespace DocumentSharingAPI.Services
 
             // --- LOGIC LINH HOẠT ---
             // Giai đoạn 1: Dưới 50 lượt tải -> Yêu cầu tuyệt đối không có báo cáo
-            if (uniqueDownloads >= 10 && uniqueDownloads <= 50)
+            // [1-2] download + 0 report
+            if (uniqueDownloads >= 1 && uniqueDownloads <= 2)
             {
                 if (reports == 0)
                 {
@@ -143,7 +148,8 @@ namespace DocumentSharingAPI.Services
                 }
             }
             // Giai đoạn 2: Từ 51 đến 200 lượt tải -> Chấp nhận 1 báo cáo
-            else if (uniqueDownloads > 50 && uniqueDownloads <= 200)
+            // [3-5] + 1 report trở xuống
+            else if (uniqueDownloads > 2 && uniqueDownloads <= 5)
             {
                 if (reports <= 1)
                 {
@@ -151,10 +157,13 @@ namespace DocumentSharingAPI.Services
                 }
             }
             // Giai đoạn 3: Trên 200 lượt tải -> Xét theo tỷ lệ (ví dụ: tỷ lệ báo cáo < 2%)
-            else if (uniqueDownloads > 200)
+            // trên 5 và tỷ lệ báo cáo < 50%
+            else if (uniqueDownloads > 5)
             {
                 double reportRatio = (double)reports / uniqueDownloads;
-                if (reportRatio < 0.02) // Chấp nhận dưới 2% báo cáo
+                // Chấp nhận dưới 2% báo cáo
+                // Chấp nhận dưới 50% báo cáo
+                if (reportRatio < 0.5)
                 {
                     shouldBeApproved = true;
                 }
