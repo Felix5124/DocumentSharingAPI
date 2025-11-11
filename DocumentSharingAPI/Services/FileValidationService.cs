@@ -11,8 +11,9 @@ namespace DocumentSharingAPI.Services
         private readonly Dictionary<string, byte[][]> _fileSignatures = new()
         {
             {".pdf", new[] {new byte[] {0x25, 0x50, 0x44, 0x46}}}, // %PDF
-            {".docx", new[] {new byte[] {0x50, 0x4B, 0x03, 0x04}, new byte[] {0x50, 0x4B, 0x05, 0x06}, new byte[] {0x50, 0x4B, 0x07, 0x08}}}, // PK (ZIP format)
-            {".doc", new[] {new byte[] {0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1}}}, // Microsoft Office compound document
+            {".docx", new[] {new byte[] {0x50, 0x4B, 0x03, 0x04}}}, // PK (ZIP format)
+            {".pptx", new[] {new byte[] {0x50, 0x4B, 0x03, 0x04}}}, // PK (ZIP format)
+            {".zip", new[] {new byte[] {0x50, 0x4B, 0x03, 0x04}}},  // PK (ZIP format)
             {".txt", new byte[0][]} // Text files don't have specific signature
         };
 

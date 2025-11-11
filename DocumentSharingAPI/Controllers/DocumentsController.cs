@@ -1,5 +1,6 @@
 ﻿using DocumentSharingAPI.Models;
 using DocumentSharingAPI.Repositories;
+using DocumentSharingAPI.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System;
@@ -26,6 +27,8 @@ namespace DocumentSharingAPI.Controllers
         private readonly IFollowRepository _followRepository;
         private readonly AppDbContext _context;
         private readonly IBlobService _blob;
+        private readonly IFileValidationService _fileValidationService;
+        private readonly IDocumentStatusService _documentStatusService; // Thêm dòng này
 
         public DocumentsController(
             IDocumentRepository documentRepository,
@@ -36,7 +39,9 @@ namespace DocumentSharingAPI.Controllers
             ITagRepository tagRepository,
             IFollowRepository followRepository,
             AppDbContext context,
-            IBlobService blob)
+            IBlobService blob,
+            IFileValidationService fileValidationService,
+            IDocumentStatusService documentStatusService) // Thêm tham số
         {
             _documentRepository = documentRepository;
             _categoryRepository = categoryRepository;
@@ -47,6 +52,8 @@ namespace DocumentSharingAPI.Controllers
             _followRepository = followRepository;
             _context = context;
             _blob = blob;
+            _fileValidationService = fileValidationService;
+            _documentStatusService = documentStatusService; // Thêm dòng này
         }
 
         [HttpGet]
@@ -55,21 +62,51 @@ namespace DocumentSharingAPI.Controllers
             var documents = await _documentRepository.GetAllAsync();
             var result = new List<object>();
 
+            // === BẮT ĐẦU THAY ĐỔI ===
+            // Lấy danh sách ID của tất cả tài liệu để truy vấn hiệu quả
+            var documentIds = documents.Select(d => d.DocumentId).ToList();
+
+            // Truy vấn được cập nhật để loại trừ lượt tải của chính người đăng
+            var uniqueDownloadCounts = await _context.UserDocuments
+                .Where(ud => documentIds.Contains(ud.DocumentId) && ud.ActionType == "Download")
+                // Join với bảng Documents để lấy thông tin UploadedBy
+                .Join(_context.Documents,
+                      ud => ud.DocumentId,
+                      doc => doc.DocumentId,
+                      (ud, doc) => new { UserDocument = ud, Document = doc })
+                // Điều kiện quan trọng: Lọc ra những lượt tải không phải của người đăng
+                .Where(joined => joined.UserDocument.UserId != joined.Document.UploadedBy)
+                .GroupBy(joined => joined.Document.DocumentId)
+                .Select(g => new
+                {
+                    DocumentId = g.Key,
+                    // Đếm số UserId duy nhất còn lại
+                    UniqueCount = g.Select(j => j.UserDocument.UserId).Distinct().Count()
+                })
+                .ToDictionaryAsync(x => x.DocumentId, x => x.UniqueCount);
+            // === KẾT THÚC THAY ĐỔI ===
+
             foreach (var d in documents)
             {
                 var user = await _userRepository.GetByIdAsync(d.UploadedBy);
+                
+                // Lấy số lượt tải duy nhất từ dictionary đã tạo
+                int uniqueDownloads = uniqueDownloadCounts.GetValueOrDefault(d.DocumentId, 0);
+
                 result.Add(new
                 {
                     d.DocumentId,
                     d.Title,
-                    Tags = d.DocumentTags.Select(dt => new TagDto { TagId = dt.Tag.TagId, Name = dt.Tag.Name }).ToList(),
+                    Tags = d.DocumentTags.Where(dt => dt.Tag != null).Select(dt => new TagDto { TagId = dt.Tag.TagId, Name = dt.Tag.Name }).ToList(),
                     d.Description,
                     d.CoverImageUrl,
                     d.UploadedAt,
-                    d.DownloadCount,
+                    d.DownloadCount, // Đây là tổng lượt tải
+                    UniqueDownloadCount = uniqueDownloads, // Đây là lượt tải thực tế (duy nhất)
                     d.FileType,
                     d.IsVipOnly,
-                    d.IsApproved,
+                    ApprovalStatus = d.ApprovalStatus,
+                    ReportCount = d.ReportCount,
                     d.IsLock,
                     d.UploadedBy,
                     Email = user?.Email ?? "Không xác định"
@@ -80,22 +117,40 @@ namespace DocumentSharingAPI.Controllers
         }
 
         [HttpGet("{id:int}")]
-        public async Task<IActionResult> GetById(int id)
+        public async Task<IActionResult> GetById(int id, [FromQuery] int? userId) // Thêm userId tùy chọn từ query
         {
             var document = await _documentRepository.GetByIdAsync(id);
-            if (document == null)
+
+            // --- LOGIC KIỂM TRA MỚI ---
+            if (document == null || document.IsLock || document.ApprovalStatus == "Suspended")
             {
-                Console.WriteLine($"Document with ID {id} not found.");
-                return NotFound("Tài liệu không tồn tại.");
+                // Nếu không tìm thấy, hoặc tài liệu bị khóa/tạm ngưng, trả về NotFound.
+                Console.WriteLine($"Access denied or not found for Document ID {id}. Status: {document?.ApprovalStatus}, IsLocked: {document?.IsLock}");
+                return NotFound("Tài liệu không tồn tại hoặc đã bị tạm ngưng.");
             }
+            // --- KẾT THÚC LOGIC MỚI ---
 
             var user = await _userRepository.GetByIdAsync(document.UploadedBy);
 
+            // --- BẮT ĐẦU THAY ĐỔI ---
+            bool hasReported = false;
+            if (userId.HasValue && userId.Value > 0)
+            {
+                // --- THAY ĐỔI LOGIC TẠI ĐÂY ---
+                // Chỉ coi là "đã báo cáo" nếu có báo cáo đang chờ hoặc đã được xử lý (chưa bị từ chối)
+                hasReported = await _context.Reports
+                    .AnyAsync(r => r.ReporterUserId == userId.Value &&
+                                   r.DocumentId == id &&
+                                   r.Status != "Rejected");
+            }
+            // --- KẾT THÚC THAY ĐỔI ---
+
+            // Thêm `hasReported` vào đối tượng trả về
             return Ok(new
             {
                 document.DocumentId,
                 document.Title,
-                Tags = document.DocumentTags.Select(dt => new TagDto { TagId = dt.Tag.TagId, Name = dt.Tag.Name }).ToList(),
+                Tags = document.DocumentTags.Where(dt => dt.Tag != null).Select(dt => new TagDto { TagId = dt.Tag.TagId, Name = dt.Tag.Name }).ToList(),
 
                 document.Description,
                 document.FileUrl,
@@ -109,10 +164,12 @@ namespace DocumentSharingAPI.Controllers
                 document.UploadedAt,
                 document.DownloadCount,
                 document.IsVipOnly,
-                document.IsApproved,
+                ApprovalStatus = document.ApprovalStatus,
+                ReportCount = document.ReportCount,
                 document.IsLock,
                 document.Comments,
-                document.UserDocuments
+                document.UserDocuments,
+                HasReported = hasReported // <-- TRƯỜNG DỮ LIỆU MỚI
             });
         }
 
@@ -144,7 +201,7 @@ namespace DocumentSharingAPI.Controllers
                 UploadedBy = model.UploadedBy,
                 UploadedAt = DateTime.Now,
                 IsVipOnly = model.IsVipOnly,
-                IsApproved = false,
+                ApprovalStatus = "Pending",
                 IsLock = false
             };
             await _documentRepository.AddAsync(document);
@@ -195,10 +252,19 @@ namespace DocumentSharingAPI.Controllers
                 }
 
                 // Xóa ảnh cũ nếu có và không phải ảnh mặc định
-                if (!string.IsNullOrEmpty(document.CoverImageUrl) &&
-                    !document.CoverImageUrl.EndsWith("default-file.png", StringComparison.OrdinalIgnoreCase))
+                if (!string.IsNullOrEmpty(document.CoverImageUrl))
                 {
-                    await _blob.DeleteAsync("covers", document.CoverImageUrl.Replace("covers/", ""));
+                    var path = document.CoverImageUrl.Trim();
+                    var blobName = NormalizeCoverBlobName(path);
+                    if (IsUserUploadedCover(blobName))
+                    {
+                        await _blob.DeleteAsync("covers", blobName);
+                        Console.WriteLine($"[Update] Deleted old cover blob: {blobName}");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[Update] Skip deleting non-upload cover: {blobName}");
+                    }
                 }
 
                 // Upload ảnh mới
@@ -314,10 +380,19 @@ namespace DocumentSharingAPI.Controllers
                     Console.WriteLine($"Deleted document blob: {document.FileUrl}");
                 }
 
-                if (!string.IsNullOrEmpty(document.CoverImageUrl) &&
-    !document.CoverImageUrl.EndsWith("default-file.png", StringComparison.OrdinalIgnoreCase))
+                if (!string.IsNullOrEmpty(document.CoverImageUrl))
                 {
-                    await _blob.DeleteAsync("covers", document.CoverImageUrl.Replace("covers/", ""));
+                    var path = document.CoverImageUrl.Trim();
+                    var blobName = NormalizeCoverBlobName(path);
+                    if (IsUserUploadedCover(blobName))
+                    {
+                        await _blob.DeleteAsync("covers", blobName);
+                        Console.WriteLine($"[Delete] Deleted cover blob: {blobName}");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[Delete] Skip deleting non-upload cover: {blobName}");
+                    }
                 }
 
 
@@ -363,13 +438,33 @@ namespace DocumentSharingAPI.Controllers
                 return BadRequest("Tiêu đề tài liệu đã tồn tại.");
             }
 
-            var allowedExtensions = new[] { ".pdf", ".docx", ".txt" };
+            // --- BẮT ĐẦU LOGIC VALIDATION MỚI ---
+
+            // 1. Kiểm tra kích thước file (ví dụ: 50MB)
+            const long maxFileSize = 50 * 1024 * 1024; // 50 MB
+            if (model.File.Length > maxFileSize)
+            {
+                return BadRequest($"Dung lượng file không được vượt quá {maxFileSize / 1024 / 1024}MB.");
+            }
+
+            // 2. Kiểm tra định dạng file (đuôi file)
+            var allowedExtensions = new[] { ".pdf", ".docx", ".txt", ".pptx", ".zip" };
             var extension = Path.GetExtension(model.File.FileName).ToLower();
             if (!allowedExtensions.Contains(extension))
             {
                 Console.WriteLine($"Invalid file extension: {extension}");
-                return BadRequest("Định dạng file không hợp lệ. Chỉ chấp nhận PDF, DOCX, và TXT.");
+                return BadRequest("Định dạng file không hợp lệ. Chỉ chấp nhận PDF, DOCX, TXT, PPTX, ZIP.");
             }
+
+            // 3. Kiểm tra chữ ký file (MIME type an toàn hơn)
+            await using var fileStreamForValidation = model.File.OpenReadStream();
+            var isSignatureValid = await _fileValidationService.ValidateFileSignatureAsync(fileStreamForValidation, extension);
+            if (!isSignatureValid)
+            {
+                return BadRequest("Nội dung file không khớp với định dạng. File có thể bị lỗi hoặc không an toàn.");
+            }
+
+            // --- KẾT THÚC LOGIC VALIDATION MỚI ---
 
             // Upload file tài liệu lên Azure Blob
             var fileGuid = Guid.NewGuid().ToString("N");
@@ -383,7 +478,7 @@ namespace DocumentSharingAPI.Controllers
 
 
             // Upload ảnh bìa lên Azure Blob
-            string coverImageUrl = null;
+            string? coverImageUrl = null;
             if (model.CoverImage != null && model.CoverImage.Length > 0)
             {
                 var allowedImageExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".tiff", ".tif", ".heic", ".heif" };
@@ -421,7 +516,8 @@ namespace DocumentSharingAPI.Controllers
                 UploadedBy = model.UploadedBy,
                 UploadedAt = DateTime.Now,
                 IsVipOnly = model.IsVipOnly,
-                IsApproved = false,
+                ApprovalStatus = "SemiApproved", // Trạng thái mới sau khi qua validation
+                ReportCount = 0,
                 IsLock = false,
                 ApprovalPriority = user.IsVip && user.VipExpiryDate > DateTime.Now ? 1 : 0 // VIP user có độ ưu tiên cao hơn
             };
@@ -454,9 +550,12 @@ namespace DocumentSharingAPI.Controllers
                 AddedAt = DateTime.Now
             };
             await _userDocumentRepository.AddAsync(userDocument);
+
+
             // Thưởng cho mọi tài khoản: 1 lượt tải bonus khi upload tài liệu được duyệt
             // Cho phép người dùng chọn loại bonus download (VIP hoặc thường)
             await _userRepository.AddBonusDownloadAsync(model.UploadedBy, model.PreferVipBonus);
+
             var uploadCount = await _context.Documents.CountAsync(d => d.UploadedBy == model.UploadedBy);
             if (uploadCount >= 5)
             {
@@ -519,7 +618,7 @@ namespace DocumentSharingAPI.Controllers
                     {
                         d.DocumentId,
                         d.Title,
-                        Tags = d.DocumentTags.Select(dt => new TagDto { TagId = dt.Tag.TagId, Name = dt.Tag.Name }).ToList(),
+                        Tags = d.DocumentTags.Where(dt => dt.Tag != null).Select(dt => new TagDto { TagId = dt.Tag.TagId, Name = dt.Tag.Name }).ToList(),
                         d.Description,
                         d.FileUrl,
                         d.CoverImageUrl,
@@ -533,7 +632,8 @@ namespace DocumentSharingAPI.Controllers
                         d.UploadedAt,
                         d.DownloadCount,
                         d.IsVipOnly,
-                        d.IsApproved,
+                        ApprovalStatus = d.ApprovalStatus,
+                        ReportCount = d.ReportCount,
                         d.IsLock,
                         d.Comments,
                         d.UserDocuments
@@ -556,6 +656,13 @@ namespace DocumentSharingAPI.Controllers
             return Ok(documents);
         }
 
+        [HttpGet("semiapproved")]
+        public async Task<IActionResult> GetSemiApproved()
+        {
+            var documents = await _documentRepository.GetSemiApprovedDocumentsAsync();
+            return Ok(documents);
+        }
+
         // Cập nhật endpoint Approve
         [HttpPut("{id}/approve")]
         public async Task<IActionResult> Approve(int id)
@@ -570,6 +677,10 @@ namespace DocumentSharingAPI.Controllers
                 }
 
                 await _documentRepository.ApproveDocumentAsync(id);
+                
+                // Tự động reset report count khi duyệt tài liệu
+                document.ReportCount = 0;
+                await _documentRepository.UpdateAsync(document);
 
                 // Gửi thông báo cho người đăng tài liệu
                 var uploaderNotification = new Notification
@@ -647,7 +758,8 @@ namespace DocumentSharingAPI.Controllers
                         d.UploadedAt,
                         d.DownloadCount,
                         d.IsVipOnly,
-                        d.IsApproved,
+                        ApprovalStatus = d.ApprovalStatus,
+                        ReportCount = d.ReportCount,
                         d.IsLock
                     })
                     .ToListAsync();
@@ -676,7 +788,7 @@ namespace DocumentSharingAPI.Controllers
                 if (document == null)
                     return NotFound(new { message = "Tài liệu không tồn tại." });
 
-                if (!document.IsApproved)
+                if (document.ApprovalStatus != "Approved" && document.ApprovalStatus != "SemiApproved")
                     return BadRequest(new { message = "Tài liệu chưa được duyệt." });
 
                 if (document.IsLock)
@@ -699,23 +811,41 @@ namespace DocumentSharingAPI.Controllers
                     }
                 }
 
-                // Cập nhật số lượt download đã sử dụng (bao gồm cả việc trừ bonus downloads nếu cần)
-                await _userRepository.UpdateDownloadCountsAsync(userId, document.IsVipOnly);
-                await _documentRepository.IncrementDownloadCountAsync(id);
-
-                var userDocument = await _userDocumentRepository.GetByUserIdDocumentIdAndActionAsync(userId, id, "Download");
-                if (userDocument == null)
+                // CHỈ TĂNG LƯỢT TẢI VÀ CẬP NHẬT LỊCH SỬ NẾU NGƯỜI TẢI KHÔNG PHẢI CHỦ SỞ HỮU
+                if (user.UserId != document.UploadedBy)
                 {
-                    await _userDocumentRepository.AddAsync(new UserDocument
-                    {
-                        UserId = userId,
-                        DocumentId = id,
-                        ActionType = "Download",
-                        AddedAt = DateTime.Now
-                    });
-                }
+                    await _userRepository.UpdateDownloadCountsAsync(userId, document.IsVipOnly);
+                    await _documentRepository.IncrementDownloadCountAsync(id);
 
-                await _context.SaveChangesAsync();
+                    var userDocument = await _userDocumentRepository.GetByUserIdDocumentIdAndActionAsync(userId, id, "Download");
+                    if (userDocument == null)
+                    {
+                        await _userDocumentRepository.AddAsync(new UserDocument
+                        {
+                            UserId = userId,
+                            DocumentId = id,
+                            ActionType = "Download",
+                            AddedAt = DateTime.Now
+                        });
+                    }
+
+                    await _context.SaveChangesAsync();
+
+                    // --- THAY THẾ KHỐI LOGIC CŨ ---
+                    // Tải lại thông tin document sau khi tăng DownloadCount
+                    var updatedDocument = await _documentRepository.GetByIdAsync(id);
+
+                    // --- BẰNG LỜI GỌI SERVICE MỚI ---
+                    // Tự động kiểm tra để duyệt hoặc hạ cấp tài liệu
+                    await _documentStatusService.CheckAndPotentiallyPromoteDocumentAsync(updatedDocument.DocumentId);
+                    await _documentStatusService.CheckAndPotentiallyDemoteDocumentAsync(updatedDocument.DocumentId);
+                    // --- KẾT THÚC THAY THẾ ---
+                }
+                else
+                {
+                    // Nếu người tải là chủ sở hữu, vẫn cho phép tải nhưng không tăng lượt tải
+                    await _context.SaveChangesAsync();
+                }
 
                 // Tạo SAS URL cho download (có thể dùng cách này để redirect)
                 // Loại bỏ prefix "documents/" nếu có để tránh duplicate path
@@ -735,6 +865,36 @@ namespace DocumentSharingAPI.Controllers
             }
         }
 
+        [HttpGet("{id}/admin-download")]
+        public async Task<IActionResult> AdminDownload(int id, [FromQuery] int userId)
+        {
+            try
+            {
+                var document = await _documentRepository.GetByIdAsync(id);
+                if (document == null)
+                    return NotFound(new { message = "Tài liệu không tồn tại." });
+
+                var user = await _userRepository.GetByIdAsync(userId);
+                if (user == null)
+                    return BadRequest(new { message = "Người dùng không tồn tại." });
+
+                // Admin download bypasses approval status and lock checks for review purposes
+                // Only check if document exists and user exists
+
+                // Tạo SAS URL cho download (có thể dùng cách này để redirect)
+                // Loại bỏ prefix "documents/" nếu có để tránh duplicate path
+                var blobPath = document.FileUrl.StartsWith("documents/")
+                    ? document.FileUrl.Substring("documents/".Length)
+                    : document.FileUrl;
+                var sasUrl = _blob.GetReadSasUrl("documents", blobPath, TimeSpan.FromMinutes(10));
+                return Ok(new { url = sasUrl, fileName = $"{document.Title}.{document.FileType}" });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = $"Lỗi server: {ex.Message}" });
+            }
+        }
+
         [HttpGet("{id}/preview")]
         public async Task<IActionResult> Preview(int id)
         {
@@ -745,9 +905,9 @@ namespace DocumentSharingAPI.Controllers
                 return NotFound("Tài liệu không tồn tại.");
             }
 
-            if (!document.IsApproved)
+            if (document.ApprovalStatus != "Approved" && document.ApprovalStatus != "SemiApproved")
             {
-                Console.WriteLine($"Document {id} is not approved.");
+                Console.WriteLine($"Document {id} is not approved. Current status: {document.ApprovalStatus}");
                 return BadRequest("Tài liệu chưa được duyệt.");
             }
 
@@ -809,7 +969,7 @@ namespace DocumentSharingAPI.Controllers
             {
                 var topDocuments = await _context.Documents
                     .Include(d => d.User)
-                    .Where(d => d.IsApproved && !d.IsLock)
+                    .Where(d => (d.ApprovalStatus == "Approved" || d.ApprovalStatus == "SemiApproved") && !d.IsLock)
                     .OrderByDescending(d => d.DownloadCount)
                     .Take(limit)
                     .Select(d => new
@@ -864,39 +1024,95 @@ namespace DocumentSharingAPI.Controllers
         [HttpPut("{id}/lock")]
         public async Task<IActionResult> LockUnlockDocument(int id, [FromBody] LockDocumentModel model)
         {
+            await using var transaction = await _context.Database.BeginTransactionAsync();
             try
             {
                 var document = await _documentRepository.GetByIdAsync(id);
                 if (document == null)
                     return NotFound("Tài liệu không tồn tại.");
 
-                await _documentRepository.UpdateLockStatusAsync(id, model.IsLocked);
+                // LOGIC MỚI: Dùng IsLocked để điều khiển ApprovalStatus
+                if (model.IsLocked)
+                {
+                    // Hành động "Khóa" sẽ chuyển trạng thái sang "Bị tạm ngưng"
+                    document.ApprovalStatus = "Suspended";
+                    document.IsLock = true; // Giữ IsLock đồng bộ
+                }
+                else
+                {
+                    // Hành động "Mở khóa" sẽ chuyển trạng thái sang "Bán duyệt"
+                    document.ApprovalStatus = "SemiApproved";
+                    document.IsLock = false;
+
+                    // Reset số lượt báo cáo và tải xuống vì admin đã xử lý chúng
+                    document.ReportCount = 0;
+                    document.DownloadCount = 0;
+
+                    // Xóa lịch sử tải xuống (UserDocuments) để reset unique download count
+                    var downloadHistory = await _context.UserDocuments
+                        .Where(ud => ud.DocumentId == id && ud.ActionType == "Download")
+                        .ToListAsync();
+
+                    if (downloadHistory.Any())
+                    {
+                        _context.UserDocuments.RemoveRange(downloadHistory);
+                    }
+
+                    // Cập nhật trạng thái của các báo cáo đang hoạt động (Pending và Resolved) thành "Bị từ chối"
+                    var activeReports = await _context.Reports
+                        .Where(r => r.DocumentId == id && (r.Status == "Pending" || r.Status == "Resolved"))
+                        .ToListAsync();
+
+                    if (activeReports.Any())
+                    {
+                        foreach (var report in activeReports)
+                        {
+                            report.Status = "Rejected";
+                        }
+                    }
+                }
+                
+                // Chỉ đánh dấu là đã thay đổi, không gọi SaveChanges
+                _context.Documents.Update(document);
+
+                var notificationMessage = model.IsLocked
+                    ? $"Tài liệu '{document.Title}' của bạn đã bị khóa để xem xét."
+                    : $"Tài liệu '{document.Title}' của bạn đã được mở khóa và chuyển về trạng thái cần cộng đồng xác thực.";
 
                 var notification = new Notification
                 {
                     UserId = document.UploadedBy,
-                    Message = $"Tài liệu '{document.Title}' của bạn đã được {(model.IsLocked ? "khóa" : "mở khóa")}.",
+                    Message = notificationMessage,
                     DocumentId = document.DocumentId,
                     SentAt = DateTime.Now,
                     IsRead = false
                 };
 
+                // Kiểm tra và xóa thông báo cũ nếu cần
                 const int MaxNotificationsPerUser = 100;
                 var currentCount = await _notificationRepository.CountByUserIdAsync(document.UploadedBy);
                 if (currentCount >= MaxNotificationsPerUser)
                 {
                     int countToDelete = currentCount - MaxNotificationsPerUser + 1;
+                    // Note: DeleteOldestByUserIdAsync cũng gọi SaveChangesAsync, cần xem xét tạo phiên bản transaction
+                    // Tạm thời giữ nguyên vì nó chỉ xóa thông báo cũ, không ảnh hưởng đến logic chính
                     await _notificationRepository.DeleteOldestByUserIdAsync(document.UploadedBy, countToDelete);
                 }
+                
+                // Sử dụng phương thức mới không tự động lưu
+                await _notificationRepository.AddForTransactionAsync(notification);
+                
+                await _context.SaveChangesAsync();
+                await transaction.CommitAsync();
 
-                await _notificationRepository.AddAsync(notification);
-                Console.WriteLine($"Document {id} {(model.IsLocked ? "locked" : "unlocked")} and notification sent.");
+                Console.WriteLine($"Document {id} status changed to {document.ApprovalStatus}.");
 
-                return Ok(new { Message = $"Tài liệu đã được {(model.IsLocked ? "khóa" : "mở khóa")} thành công." });
+                return Ok(new { Message = $"Trạng thái tài liệu đã được cập nhật thành '{document.ApprovalStatus}'." });
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error while {(model.IsLocked ? "locking" : "unlocking")} document {id}: {ex.Message}");
+                await transaction.RollbackAsync();
+                Console.WriteLine($"Error while changing status for document {id}: {ex.Message}");
                 return StatusCode(500, $"Lỗi server: {ex.Message}");
             }
         }
@@ -913,7 +1129,7 @@ namespace DocumentSharingAPI.Controllers
             var relatedDocumentsQuery = _context.Documents
                 .Where(d => d.CategoryId == currentDocument.CategoryId &&
                             d.DocumentId != id &&
-                            d.IsApproved &&
+                            (d.ApprovalStatus == "Approved" || d.ApprovalStatus == "SemiApproved") &&
                             !d.IsLock)
                 .OrderByDescending(d => d.DownloadCount)
                 .Take(count);
@@ -937,6 +1153,84 @@ namespace DocumentSharingAPI.Controllers
         }
 
 
+
+        [HttpPut("{id}/reset-reports")]
+        public async Task<IActionResult> ResetReportCount(int id)
+        {
+            // Bắt đầu một transaction
+            await using var transaction = await _context.Database.BeginTransactionAsync();
+
+            try
+            {
+                var document = await _documentRepository.GetByIdAsync(id);
+                if (document == null)
+                    return NotFound("Tài liệu không tồn tại.");
+
+                // 1. Cập nhật trạng thái các báo cáo liên quan
+                var activeReports = await _context.Reports
+                    .Where(r => r.DocumentId == id && (r.Status == "Pending" || r.Status == "Resolved"))
+                    .ToListAsync();
+
+                if (activeReports.Any())
+                {
+                    foreach (var report in activeReports)
+                    {
+                        report.Status = "Rejected";
+                    }
+                    // Không cần SaveChanges() ở đây
+                }
+
+                // 2. Cập nhật tài liệu
+                document.ReportCount = 0;
+                if (document.ApprovalStatus == "Pending")
+                {
+                    document.ApprovalStatus = "SemiApproved";
+                }
+                // Chỉ đánh dấu là đã thay đổi, không gọi SaveChanges
+                _context.Documents.Update(document);
+
+                // 3. Tạo và thêm thông báo (sử dụng phương thức mới)
+                var notification = new Notification
+                {
+                    UserId = document.UploadedBy,
+                    Message = $"Tài liệu '{document.Title}' của bạn đã được khôi phục trạng thái sau khi xem xét báo cáo.",
+                    DocumentId = document.DocumentId,
+                    SentAt = DateTime.Now,
+                    IsRead = false
+                };
+                
+                // Kiểm tra và xóa thông báo cũ nếu cần
+                const int MaxNotificationsPerUser = 100;
+                var currentCount = await _notificationRepository.CountByUserIdAsync(document.UploadedBy);
+                if (currentCount >= MaxNotificationsPerUser)
+                {
+                    int countToDelete = currentCount - MaxNotificationsPerUser + 1;
+                    // Note: DeleteOldestByUserIdAsync cũng gọi SaveChangesAsync, cần xem xét tạo phiên bản transaction
+                    // Tạm thời giữ nguyên vì nó chỉ xóa thông báo cũ, không ảnh hưởng đến logic chính
+                    await _notificationRepository.DeleteOldestByUserIdAsync(document.UploadedBy, countToDelete);
+                }
+                
+                // Sử dụng phương thức mới không tự động lưu
+                await _notificationRepository.AddForTransactionAsync(notification);
+
+                // 4. Lưu tất cả các thay đổi trong transaction
+                await _context.SaveChangesAsync();
+
+                // 5. Nếu mọi thứ thành công, commit transaction
+                await transaction.CommitAsync();
+
+                return Ok(new { Message = "Đã từ chối các báo cáo đang chờ và khôi phục trạng thái tài liệu thành công. Số lượt tải được giữ nguyên." });
+            }
+            catch (Exception ex)
+            {
+                // 6. Nếu có lỗi, rollback tất cả thay đổi
+                await transaction.RollbackAsync();
+                
+                Console.WriteLine($"Error resetting report count for document {id}: {ex.Message}");
+                // Ghi log lỗi chi tiết (sử dụng ILogger)
+                return StatusCode(500, $"Lỗi server: Đã xảy ra lỗi không mong muốn và các thay đổi đã được hoàn tác.");
+            }
+        }
 
         [HttpGet("related-by-tags")]
         public async Task<IActionResult> GetRelatedDocumentsByTags([FromQuery] List<string> tagNames, [FromQuery] int excludeDocumentId, [FromQuery] int limit = 5)
@@ -969,6 +1263,53 @@ namespace DocumentSharingAPI.Controllers
                 ".txt" => "text/plain",
                 _ => "application/octet-stream"
             };
+        }
+
+        private bool IsDefaultCover(string coverUrl)
+        {
+            if (string.IsNullOrWhiteSpace(coverUrl)) return true;
+            // Normalize: strip known prefix
+            var name = coverUrl.StartsWith("covers/", StringComparison.OrdinalIgnoreCase)
+                ? coverUrl.Substring("covers/".Length)
+                : coverUrl;
+
+            // Known default names used in the app
+            return name.Equals("default-cover.png", StringComparison.OrdinalIgnoreCase)
+                   || name.Equals("default-file.png", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private string NormalizeCoverBlobName(string coverUrl)
+        {
+            if (string.IsNullOrWhiteSpace(coverUrl)) return string.Empty;
+            // strip query
+            var withoutQuery = coverUrl.Split('?')[0];
+            // strip container prefix
+            var path = withoutQuery.StartsWith("covers/", StringComparison.OrdinalIgnoreCase)
+                ? withoutQuery.Substring("covers/".Length)
+                : withoutQuery;
+            // trim leading slash just in case
+            path = path.TrimStart('/');
+            return path;
+        }
+
+        private bool IsUserUploadedCover(string blobName)
+        {
+            if (string.IsNullOrWhiteSpace(blobName)) return false;
+            // Only delete if it matches our uploaded naming pattern: 32-hex guid + extension
+            // e.g., a1b2c3...32 chars... .jpg
+            var name = Path.GetFileName(blobName);
+            var dot = name.LastIndexOf('.');
+            if (dot <= 0) return false;
+            var baseName = name.Substring(0, dot);
+            if (baseName.Length != 32) return false;
+            for (int i = 0; i < 32; i++)
+            {
+                char c = baseName[i];
+                bool isHex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+                if (!isHex) return false;
+            }
+            // Passed heuristic; treat as user-uploaded cover
+            return true;
         }
     }
 
@@ -1026,3 +1367,4 @@ namespace DocumentSharingAPI.Controllers
 
 
 }
+

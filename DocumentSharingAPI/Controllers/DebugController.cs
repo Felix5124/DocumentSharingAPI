@@ -65,7 +65,7 @@ namespace DocumentSharingAPI.Controllers
                     containerName = "documents",
                     downloadSasUrl = downloadSasUrl,
                     previewSasUrl = previewSasUrl,
-                    isApproved = document.IsApproved,
+                    approvalStatus = document.ApprovalStatus,
                     isLocked = document.IsLock
                 });
             }

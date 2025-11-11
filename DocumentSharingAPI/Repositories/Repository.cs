@@ -45,5 +45,28 @@ namespace DocumentSharingAPI.Repositories
                 await _context.SaveChangesAsync();
             }
         }
+
+        // --- TRANSACTION SUPPORT METHODS ---
+        public async Task AddForTransactionAsync(T entity)
+        {
+            await _dbSet.AddAsync(entity);
+            // DO NOT call SaveChangesAsync() here - let the transaction handle it
+        }
+
+        public async Task UpdateForTransactionAsync(T entity)
+        {
+            _dbSet.Update(entity);
+            // DO NOT call SaveChangesAsync() here - let the transaction handle it
+        }
+
+        public async Task DeleteForTransactionAsync(int id)
+        {
+            var entity = await GetByIdAsync(id);
+            if (entity != null)
+            {
+                _dbSet.Remove(entity);
+                // DO NOT call SaveChangesAsync() here - let the transaction handle it
+            }
+        }
     }
 }

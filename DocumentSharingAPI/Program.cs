@@ -11,6 +11,7 @@ using Microsoft.Extensions.Logging;
 using System.Security.Claims;
 using DocumentSharingAPI.Services;
 
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Configure Kestrel to use specific URLs
@@ -181,6 +182,10 @@ builder.Services.AddScoped<ITagRepository, TagRepository>();
 builder.Services.AddScoped<IVipSubscriptionRepository, VipSubscriptionRepository>();
 builder.Services.AddScoped<IGeminiChatService, GeminiChatService>();
 builder.Services.AddSingleton<IBlobService, BlobService>();
+builder.Services.AddScoped<IFileValidationService, FileValidationService>();
+
+// THÊM DÒNG NÀY VÀO
+builder.Services.AddScoped<IDocumentStatusService, DocumentStatusService>();
 
 
 
@@ -250,7 +255,7 @@ app.UseStaticFiles(new StaticFileOptions
     FileProvider = new PhysicalFileProvider(filesPath),
     RequestPath = "/Files"
 });
-app.UseStaticFiles();
+// app.UseStaticFiles(); // Removed to avoid wwwroot requirement
 app.UseCors("AllowFrontend");
 app.UseRouting();
 app.UseAuthentication();
