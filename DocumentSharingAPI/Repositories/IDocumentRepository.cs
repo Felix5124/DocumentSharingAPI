@@ -7,6 +7,7 @@ namespace DocumentSharingAPI.Repositories
         Task<Document> GetByTitleAsync(string title);
         Task<IEnumerable<Document>> SearchAsync(string keyword, int? categoryId, string fileType, string sortBy);
         Task<IEnumerable<Document>> GetPendingDocumentsAsync();
+        Task<IEnumerable<Document>> GetSemiApprovedDocumentsAsync();
         Task ApproveDocumentAsync(int id);
         Task IncrementDownloadCountAsync(int id);
         Task<(IEnumerable<Document>, int)> GetPagedAsync(int page, int pageSize, string keyword, int? categoryId, string fileType, string sortBy, List<string> tagNames = null, int? schoolId = null); new Task DeleteAsync(int id); // Thêm từ khóa new
