@@ -67,33 +67,57 @@ namespace DocumentSharingAPI.Controllers
             if (model == null || string.IsNullOrWhiteSpace(model.FirebaseUid) || string.IsNullOrWhiteSpace(model.Email))
                 return BadRequest("Thông tin đăng ký không hợp lệ.");
 
+            // Kiểm tra user đã tồn tại theo FirebaseUid
             var existingUserByUid = await _userRepository.GetByFirebaseUidAsync(model.FirebaseUid);
             if (existingUserByUid != null)
+            {
+                Console.WriteLine($"User với FirebaseUid {model.FirebaseUid} đã tồn tại, trả về user hiện có.");
                 return Ok(existingUserByUid);
+            }
 
+            // Kiểm tra user đã tồn tại theo Email
             var existingUserByEmail = await _userRepository.GetByEmailAsync(model.Email);
             if (existingUserByEmail != null)
                 return Conflict(new { message = "Email này đã được đăng ký trong hệ thống với một tài khoản khác." });
 
-            var user = new User
+            try
             {
-                FirebaseUid = model.FirebaseUid,
-                Email = model.Email,
-                FullName = model.FullName,
-                IsVip = false,
-                IsAdmin = false,
-                IsLocked = false,
-                AvatarUrl = "default-avatar.png",
-                CreatedAt = DateTime.UtcNow
-            };
+                var user = new User
+                {
+                    FirebaseUid = model.FirebaseUid,
+                    Email = model.Email,
+                    FullName = model.FullName,
+                    IsVip = false,
+                    IsAdmin = false,
+                    IsLocked = false,
+                    AvatarUrl = "default-avatar.png",
+                    CreatedAt = DateTime.UtcNow
+                };
 
-            await _userRepository.AddAsync(user);
+                await _userRepository.AddAsync(user);
 
-            var createdUser = await _userRepository.GetByFirebaseUidAsync(user.FirebaseUid);
-            if (createdUser == null)
-                return StatusCode(StatusCodes.Status500InternalServerError, "Không thể tạo người dùng mới trong cơ sở dữ liệu.");
+                var createdUser = await _userRepository.GetByFirebaseUidAsync(user.FirebaseUid);
+                if (createdUser == null)
+                    return StatusCode(StatusCodes.Status500InternalServerError, "Không thể tạo người dùng mới trong cơ sở dữ liệu.");
 
-            return Ok(createdUser);
+                Console.WriteLine($"User mới được tạo thành công: {createdUser.UserId}, FirebaseUid: {createdUser.FirebaseUid}");
+                return Ok(createdUser);
+            }
+            catch (Exception ex)
+            {
+                // Xử lý race condition: nếu user vừa được tạo bởi request khác
+                Console.WriteLine($"Lỗi khi tạo user (có thể do race condition): {ex.Message}");
+                
+                // Thử lấy lại user đã tồn tại
+                var retryUser = await _userRepository.GetByFirebaseUidAsync(model.FirebaseUid);
+                if (retryUser != null)
+                {
+                    Console.WriteLine($"User được tạo bởi request song song, trả về user hiện có: {retryUser.UserId}");
+                    return Ok(retryUser);
+                }
+                
+                return StatusCode(StatusCodes.Status500InternalServerError, "Lỗi khi tạo người dùng mới: " + ex.Message);
+            }
         }
 
         [HttpPost("login")]
