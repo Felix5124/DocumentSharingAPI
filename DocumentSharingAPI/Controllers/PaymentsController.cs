@@ -15,19 +15,22 @@ namespace DocumentSharingAPI.Controllers
         private readonly IUserRepository _userRepository;
         private readonly IVipSubscriptionRepository _vipSubscriptionRepository;
         private readonly IVietQRService _vietQRService;
+        private readonly INotificationRepository _notificationRepository;
 
         public PaymentsController(
             IPaymentRepository paymentRepository,
             IBankAccountRepository bankAccountRepository,
             IUserRepository userRepository,
             IVipSubscriptionRepository vipSubscriptionRepository,
-            IVietQRService vietQRService)
+            IVietQRService vietQRService,
+            INotificationRepository notificationRepository)
         {
             _paymentRepository = paymentRepository;
             _bankAccountRepository = bankAccountRepository;
             _userRepository = userRepository;
             _vipSubscriptionRepository = vipSubscriptionRepository;
             _vietQRService = vietQRService;
+            _notificationRepository = notificationRepository;
         }
 
         /// <summary>
@@ -49,13 +52,14 @@ namespace DocumentSharingAPI.Controllers
             // Xác định giá tiền dựa trên loại gói
             decimal amount = request.SubscriptionType.ToLower() switch
             {
-                "monthly" => 50000, // 50,000 VND
-                "yearly" => 500000,  // 500,000 VND
+                "monthly" => 49000,    // 49,000 VND - 1 tháng
+                "quarterly" => 129000, // 129,000 VND - 3 tháng
+                "yearly" => 499000,    // 499,000 VND - 12 tháng
                 _ => 0
             };
 
             if (amount == 0)
-                return BadRequest(new { message = "Invalid subscription type. Use 'Monthly' or 'Yearly'." });
+                return BadRequest(new { message = "Invalid subscription type. Use 'Monthly', 'Quarterly', or 'Yearly'." });
 
             // Tạo mã đơn hàng
             var orderCode = _vietQRService.GenerateOrderCode();
@@ -243,17 +247,25 @@ namespace DocumentSharingAPI.Controllers
                 return BadRequest(new { message = "User not found in payment record" });
 
             DateTime startDate = DateTime.Now;
-            DateTime endDate = payment.SubscriptionType.ToLower() == "monthly"
-                ? startDate.AddMonths(1)
-                : startDate.AddYears(1);
+            DateTime endDate = payment.SubscriptionType.ToLower() switch
+            {
+                "monthly" => startDate.AddMonths(1),
+                "quarterly" => startDate.AddMonths(3),
+                "yearly" => startDate.AddYears(1),
+                _ => startDate.AddMonths(1)
+            };
 
             // Nếu user đã có VIP active, gia hạn thêm
             if (user.IsVip && user.VipExpiryDate.HasValue && user.VipExpiryDate > DateTime.Now)
             {
                 startDate = user.VipExpiryDate.Value;
-                endDate = payment.SubscriptionType.ToLower() == "monthly"
-                    ? startDate.AddMonths(1)
-                    : startDate.AddYears(1);
+                endDate = payment.SubscriptionType.ToLower() switch
+                {
+                    "monthly" => startDate.AddMonths(1),
+                    "quarterly" => startDate.AddMonths(3),
+                    "yearly" => startDate.AddYears(1),
+                    _ => startDate.AddMonths(1)
+                };
             }
 
             // Tạo VIP subscription
@@ -275,6 +287,24 @@ namespace DocumentSharingAPI.Controllers
             user.IsVip = true;
             user.VipExpiryDate = endDate;
             await _userRepository.UpdateAsync(user);
+
+            // Tạo thông báo cho user
+            var subscriptionTypeText = payment.SubscriptionType.ToLower() switch
+            {
+                "monthly" => "1 tháng",
+                "quarterly" => "3 tháng",
+                "yearly" => "12 tháng",
+                _ => payment.SubscriptionType
+            };
+            
+            var notification = new Notification
+            {
+                UserId = user.UserId,
+                Message = $"Bạn đã đăng ký thành công gói VIP {subscriptionTypeText}! Tài khoản VIP của bạn có hiệu lực đến {endDate.ToString("dd/MM/yyyy")}.",
+                IsRead = false,
+                SentAt = DateTime.Now
+            };
+            await _notificationRepository.AddAsync(notification);
 
             return Ok(new
             {
