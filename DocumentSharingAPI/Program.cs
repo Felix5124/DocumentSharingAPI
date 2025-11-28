@@ -180,12 +180,15 @@ builder.Services.AddScoped<IUserBadgeRepository, UserBadgeRepository>();
 builder.Services.AddScoped<IUserDocumentRepository, UserDocumentRepository>();
 builder.Services.AddScoped<ITagRepository, TagRepository>();
 builder.Services.AddScoped<IVipSubscriptionRepository, VipSubscriptionRepository>();
+builder.Services.AddScoped<IPaymentRepository, PaymentRepository>();
+builder.Services.AddScoped<IBankAccountRepository, BankAccountRepository>();
 builder.Services.AddScoped<IGeminiChatService, GeminiChatService>();
 builder.Services.AddSingleton<IBlobService, BlobService>();
 builder.Services.AddScoped<IFileValidationService, FileValidationService>();
 
 // THÊM DÒNG NÀY VÀO
 builder.Services.AddScoped<IDocumentStatusService, DocumentStatusService>();
+builder.Services.AddScoped<IVietQRService, VietQRService>();
 
 
 
