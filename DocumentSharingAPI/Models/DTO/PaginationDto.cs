@@ -26,5 +26,9 @@ namespace DocumentSharingAPI.Models.DTO
         public int ReportCount { get; set; }
         public System.DateTime LatestReportDate { get; set; }
         public List<string> Reasons { get; set; } // Danh sách các lý do báo cáo
+        
+        // Thêm 2 trường này
+        public bool IsLocked { get; set; }
+        public string ApprovalStatus { get; set; }
     }
 }
