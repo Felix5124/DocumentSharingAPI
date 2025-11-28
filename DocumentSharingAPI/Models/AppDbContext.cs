@@ -23,6 +23,8 @@ namespace DocumentSharingAPI.Models
         public DbSet<Tag> Tags { get; set; }
         public DbSet<DocumentTag> DocumentTags { get; set; }
         public DbSet<Report> Reports { get; set; }
+        public DbSet<Payment> Payments { get; set; }
+        public DbSet<BankAccount> BankAccounts { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
