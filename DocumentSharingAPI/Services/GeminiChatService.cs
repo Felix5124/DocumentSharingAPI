@@ -6,7 +6,8 @@ using System;
 using DocumentSharingAPI.Repositories;
 using DocumentSharingAPI.Models;
 using System.Collections.Generic;
-// using System.Text.RegularExpressions; // Cân nhắc nếu muốn dùng regex
+using System.Text;
+using Microsoft.EntityFrameworkCore;
 
 namespace DocumentSharingAPI.Services
 {
@@ -15,6 +16,7 @@ namespace DocumentSharingAPI.Services
         private readonly string _apiKey;
         private readonly IUserRepository _userRepository;
         private readonly IUserDocumentRepository _userDocumentRepository;
+        private readonly AppDbContext _context;
         private readonly GenerativeModel _geminiProModel;
 
         public GeminiChatService(IConfiguration configuration, IUserRepository userRepository, IUserDocumentRepository userDocumentRepository, AppDbContext context)
@@ -22,7 +24,8 @@ namespace DocumentSharingAPI.Services
             _apiKey = configuration["GeminiApiKey"];
             _userRepository = userRepository;
             _userDocumentRepository = userDocumentRepository;
-            _geminiProModel = new GenerativeModel(apiKey: _apiKey, model: "gemini-1.5-flash");
+            _context = context;
+            _geminiProModel = new GenerativeModel(apiKey: _apiKey, model: "gemini-2.5-flash-lite");
         }
 
         public async Task<string> GetChatbotResponseAsync(string userMessage, int userId)
@@ -30,102 +33,118 @@ namespace DocumentSharingAPI.Services
             var user = await _userRepository.GetByIdAsync(userId);
             if (user == null)
             {
-                return "I couldn't find your user information.";
+                return "Không tìm thấy thông tin người dùng. Vui lòng đăng nhập lại.";
             }
 
-            string userInfoContext = $"The user is '{user.FullName}' (ID: {userId}, Email: {user.Email}). VIP Status: {(user.IsVip ? "VIP" : "Regular")}.";
-
+            // Lấy thông tin upload/download
             var uploads = await _userDocumentRepository.GetByUserIdAndActionAsync(userId, "Upload");
-            userInfoContext += $" Documents uploaded: {uploads.Count()}.";
+            // var downloads = await _userDocumentRepository.GetByUserIdAndActionAsync(userId, "Download"); // Dòng này chưa dùng, có thể comment lại
+            
+            // Lấy danh sách Top 5 tài liệu của user
+            var topDocs = await _context.Documents
+                .Where(d => d.UploadedBy == userId)
+                .OrderByDescending(d => d.DownloadCount)
+                .Take(5)
+                .Select(d => $"{d.Title} ({d.DownloadCount} lượt tải)")
+                .ToListAsync();
 
-            var downloads = await _userDocumentRepository.GetByUserIdAndActionAsync(userId, "Download");
-            userInfoContext += $" Documents downloaded: {downloads.Count()}.";
+            string topDocsString = topDocs.Any() ? string.Join("\n", topDocs) : "Chưa có tài liệu nào";
 
-            string systemInstruction = @"You are an expert assistant for 'DHK', a document sharing website.
-Your primary goal is to:
-1. Guide users on how to use the website.
-2. Provide information about their account (points, number of uploads, number of downloads) based on the 'User Context' provided. WHEN A USER ASKS FOR A SPECIFIC PIECE OF ACCOUNT INFORMATION (E.G., ONLY POINTS, OR ONLY UPLOAD COUNT, OR ONLY DOWNLOAD COUNT), YOU MUST PROVIDE *ONLY* THE INFORMATION THEY ASKED FOR. Do NOT list all other account details from the 'User Context' unless the user explicitly asks for a full summary (e.g., 'thông tin tài khoản của tôi').
-3. Be friendly, concise, and answer in Vietnamese.
+            // Xây dựng ngữ cảnh động về User
+            StringBuilder userContextBuilder = new StringBuilder();
+            userContextBuilder.AppendLine($" - Tên: {user.FullName}");
+            userContextBuilder.AppendLine($" - Email: {user.Email}");
+            userContextBuilder.AppendLine($" - Loại tài khoản: {(user.IsVip ? "VIP" : "Thường")}");
+            if (user.IsVip && user.VipExpiryDate.HasValue)
+            {
+                userContextBuilder.AppendLine($" - Hết hạn VIP: {user.VipExpiryDate.Value:dd/MM/yyyy}");
+            }
+            userContextBuilder.AppendLine($" - Lượt tải thường đã dùng: {user.RegularDownloadsUsedToday}/2");
+            userContextBuilder.AppendLine($" - Lượt tải VIP đã dùng: {user.VipDownloadsUsedToday}/10");
+            userContextBuilder.AppendLine($" - Kho dư (Bonus): {user.RegularBonusDownloads} thường, {user.VipBonusDownloads} VIP");
+            userContextBuilder.AppendLine($" - Tổng tài liệu đã upload: {uploads.Count()}");
+            userContextBuilder.AppendLine($" - Top 5 tài liệu hot nhất của họ:");
+            userContextBuilder.AppendLine($"{topDocsString}");
 
-Interpret user queries related to points, uploads, or downloads flexibly.
-- If the user asks about points (e.g., 'điểm số của tôi', 'tôi có mấy điểm rồi', 'xem điểm', 'điểm của tôi là bao nhiêu'), understand they want to know their points. Respond ONLY with their points, and make it clear. For example: 'Chào bạn [User's FullName], số điểm hiện tại của bạn là [User's Points from User Context] điểm.' Do NOT mention upload or download counts in this specific response.
-- If the user asks about uploads (e.g., 'tài liệu tôi up', 'đã đăng bao nhiêu file', 'số lượng upload của tôi'), understand they want to know their upload count. Respond ONLY with their upload count. For example: 'Chào bạn [User's FullName], bạn đã tải lên [User's Upload Count from User Context] tài liệu.' Do NOT mention points or download counts in this specific response.
-- If the user asks about downloads (e.g., 'file đã lấy về', 'tải bao nhiêu lần', 'số lượng download của tôi'), understand they want to know their download count. Respond ONLY with their download count. For example: 'Chào bạn [User's FullName], bạn đã tải về [User's Download Count from User Context] tài liệu.' Do NOT mention points or upload counts in this specific response.
-- If the user asks for a general account summary (e.g., 'thông tin tài khoản của tôi', 'tóm tắt tài khoản'), then you should provide a summary including their points, upload count, and download count.
+            // --- CẬP NHẬT SYSTEM INSTRUCTION VỚI DỮ LIỆU FAQ ---
+            string systemInstruction = $@"
+Vai trò: Bạn là DocShare AI Assistant, trợ lý ảo chuyên nghiệp của hệ thống chia sẻ tài liệu DocShare.
+Phong cách: Thân thiện, ngắn gọn, hỗ trợ nhiệt tình, trả lời bằng tiếng Việt.
+Quy tắc: CHỈ trả lời các câu hỏi liên quan đến hệ thống DocShare (Tài khoản, Tài liệu, VIP, Lỗi kỹ thuật). Từ chối khéo léo các câu hỏi không liên quan.
 
-If asked how to upload or download, provide clear, step-by-step instructions.
-- **To upload a document:**
-  1. Navigate to the '**Tải lên tài liệu** ' page from the user menu.
-  2. Fill in all required information on the form: **Title**, **Description**, **Category** ,**Required Points**, **Tags (optional)**.
-  3. **Select the document file** (e.g., PDF, DOCX) and a **cover image** (optional but recommended).
-  4. Click '**Tải lên**' and wait for the confirmation. Your document will be pending approval by an admin.
+Dữ liệu người dùng hiện tại:
+{userContextBuilder.ToString()}
 
-- **To download a document, please follow these steps:**
-  1. **Tìm tài liệu:** Đầu tiên, bạn cần tìm tài liệu muốn tải. Hãy sử dụng thanh tìm kiếm ở đầu trang (bạn có thể nhập từ khóa, tiêu đề, hoặc thẻ).
-  2. **Xem chi tiết:** Khi tìm thấy tài liệu, nhấp vào tiêu đề của tài liệu đó để xem thông tin chi tiết.
-  3. **Kiểm tra yêu cầu và điểm của bạn:**
-     - Trên trang chi tiết tài liệu, bạn sẽ thấy nút 'Tải xuống'.
-     - **Lưu ý quan trọng:** Một số tài liệu có thể yêu cầu một số điểm nhất định để tải.
-     - (Thông tin cho bạn: Hiện tại bạn đang có [User's Points from User Context] điểm. Bạn luôn có thể kiểm tra lại trong hồ sơ cá nhân hoặc hỏi tôi.)
-  4. **Thực hiện tải xuống:** Nếu tài liệu không yêu cầu điểm, hoặc nếu bạn có đủ điểm cho tài liệu đó, hãy nhấp vào nút 'Tải xuống' để bắt đầu quá trình.
-  5. **Nếu cần thêm điểm:** Trong trường hợp tài liệu yêu cầu nhiều điểm hơn số bạn đang có, bạn có thể tích lũy thêm điểm bằng cách đóng góp tài liệu hữu ích cho cộng đồng hoặc tham gia các hoạt động khác trên DHK.
+Cơ sở dữ liệu kiến thức (FAQ):
 
-- **To search for documents:**
-  Bạn chỉ cần nhập tên tài liệu vào ô tìm kiếm.
+1. Tài khoản & Đăng nhập:
+- Đăng ký: Vào trang Đăng ký > Nhập thông tin > Xác thực qua email.
+- Login Google: Hỗ trợ đăng nhập nhanh bằng nút 'Google'.
+- Quên mật khẩu: Dùng chức năng 'Quên mật khẩu' tại trang Login để nhận mail reset.
+- Đổi Avatar: Vào Hồ sơ (Profile) > Nhấn icon Camera ở ảnh đại diện.
+- Khóa tài khoản: Có thể do vi phạm chính sách hoặc admin khóa. Cần liên hệ Admin.
+- Đổi tên: Vào Hồ sơ > Nhập tên mới > Lưu.
+
+2. Upload tài liệu:
+- Cách tải: Menu Upload > Điền form (Tiêu đề, Mô tả, Danh mục) > Chọn file > Submit.
+- Định dạng: PDF, DOCX, TXT, PPTX, ZIP. Max 50MB.
+- Trạng thái: Mới tải lên là 'Chưa kiểm duyệt' hoặc 'Đang chờ'. Chỉ hiện công khai khi 'Đã duyệt'.
+- Chỉnh sửa: Vào Profile > Danh sách tài liệu > Icon sửa.
+- Quyền lợi: Upload được duyệt sẽ nhận thêm lượt tải (Bonus Download). Đủ 5 file nhận badge 'Uploader'.
+
+3. Tải xuống (Download):
+- Cách tải: Trang chi tiết > Nút Download.
+- Lỗi tải: Chưa đăng nhập, file bị khóa/chờ duyệt, hoặc hết lượt tải.
+- Giới hạn Free: 2 lượt/ngày. Reset lúc 00:00.
+- Tăng lượt: Upload tài liệu để nhận Bonus hoặc mua VIP.
+- Tài liệu VIP Only: Chỉ dành cho tài khoản VIP hoặc dùng điểm VIP Bonus.
+
+4. Gói VIP & Thanh toán:
+- Quyền lợi: Tải 13 file/ngày (8 thường + 5 VIP), Xem trước 15 trang PDF, Không quảng cáo, Duyệt bài ưu tiên.
+- Các gói: Tháng (49k), 3 Tháng (129k), Năm (399k).
+- Cách mua: Menu 'Nâng cấp tài khoản' > Chọn gói > Thanh toán (Test Mode).
+- Kiểm tra hạn: Xem trong Profile hoặc hỏi trực tiếp tôi.
+
+5. Tương tác & Cộng đồng:
+- Bình luận: Cuối trang chi tiết (chỉ khi tài liệu đã duyệt).
+- Báo cáo: Nút cờ 'Báo cáo vi phạm' nếu thấy nội dung xấu.
+- Theo dõi: Nút 'Theo dõi' ở trang chi tiết hoặc profile người khác.
+- Lịch sử tải: Vào Profile > Tài liệu đã tải xuống.
+- Badge: Biểu tượng cạnh tên (ví dụ: Top Uploader, Top Commenter).
+
+6. Sự cố thường gặp:
+- Lỗi Preview: Do file lỗi hoặc vượt quá giới hạn trang xem thử (Free: 2 trang, VIP: 15 trang) -> Hãy tải về để xem full.
+- Tài liệu 'Tạm ngưng' (Suspended): Do bị báo cáo nhiều lần -> Chờ Admin xử lý.
+- Lỗi Upload: Kiểm tra lại định dạng và dung lượng file (<50MB).
+
+Hãy trả lời câu hỏi sau của người dùng dựa trên thông tin trên: '{userMessage}'
 ";
-
+            
             string lowerUserMessage = userMessage.ToLower();
-            bool intentProcessed = false;
 
             // Ưu tiên các câu lệnh rõ ràng, nhưng AI vẫn có thể suy luận từ systemInstruction
-            if (IsAskingForPoints(lowerUserMessage))
+            if (IsAskingForStats(lowerUserMessage))
             {
-                // Context đã có điểm, AI sẽ tự sử dụng
-                intentProcessed = true; // Đánh dấu là đã có xử lý ý định cơ bản
+                 // Để AI tự trả lời dựa trên Context đã nạp ở trên
             }
-            else if (IsAskingForUploads(lowerUserMessage))
-            {
-                // Context đã có số lượng upload
-                intentProcessed = true;
-            }
-            else if (IsAskingForDownloads(lowerUserMessage))
-            {
-                // Context đã có số lượng download
-                intentProcessed = true;
-            }
-            // Các câu hỏi về hướng dẫn sẽ được AI xử lý dựa vào systemInstruction
-
-            string fullPrompt = $"{systemInstruction}\n\nUser Context: {userInfoContext}\n\nUser Query: {userMessage}";
 
             try
             {
-                var response = await _geminiProModel.GenerateContentAsync(fullPrompt);
+                var response = await _geminiProModel.GenerateContentAsync(systemInstruction);
                 return response.Text;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error calling Generative AI API: {ex.Message} for prompt: {fullPrompt}");
-                return "Xin lỗi, tôi đang gặp sự cố khi kết nối đến trợ lý AI. Vui lòng thử lại sau.";
+                Console.WriteLine($"Error calling Generative AI API: {ex.Message}");
+                return "Hiện tại hệ thống AI đang bận. Vui lòng thử lại sau giây lát.";
             }
         }
 
-        // Helper methods để kiểm tra ý định cơ bản (có thể mở rộng bằng regex hoặc logic phức tạp hơn)
-        private bool IsAskingForPoints(string lowerUserMessage)
+        // Helper methods
+        private bool IsAskingForStats(string msg)
         {
-            string[] keywords = { "điểm", "point" };
-            return keywords.Any(kw => lowerUserMessage.Contains(kw));
-        }
-
-        private bool IsAskingForUploads(string lowerUserMessage)
-        {
-            string[] keywords = { "upload", "tải lên", "đăng tài liệu", "up tài liệu" };
-            return keywords.Any(kw => lowerUserMessage.Contains(kw));
-        }
-
-        private bool IsAskingForDownloads(string lowerUserMessage)
-        {
-            string[] keywords = { "download", "tải về", "lấy tài liệu" };
-            return keywords.Any(kw => lowerUserMessage.Contains(kw));
+            string[] keywords = { "điểm", "point", "upload", "tải lên", "download", "tải về", "bao nhiêu", "lượt tải", "số liệu", "hết hạn", "vip" };
+            return keywords.Any(kw => msg.Contains(kw));
         }
     }
 }
