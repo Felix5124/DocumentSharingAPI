@@ -101,14 +101,17 @@ namespace DocumentSharingAPI.Controllers
             }
 
             // 2. Nhóm các báo cáo theo DocumentId
-            var groupedQuery = query.GroupBy(r => new { r.DocumentId, r.Document.Title })
+            var groupedQuery = query.GroupBy(r => new { r.DocumentId, r.Document.Title, r.Document.IsLock, r.Document.ApprovalStatus }) // Group thêm IsLock, Status
                                     .Select(g => new GroupedReportDto
                                     {
                                         DocumentId = g.Key.DocumentId,
                                         DocumentTitle = g.Key.Title,
                                         ReportCount = g.Count(),
                                         LatestReportDate = g.Max(r => r.ReportedAt),
-                                        Reasons = g.Select(r => r.Reason).Distinct().ToList()
+                                        Reasons = g.Select(r => r.Reason).Distinct().ToList(),
+                                        // Map dữ liệu
+                                        IsLocked = g.Key.IsLock,
+                                        ApprovalStatus = g.Key.ApprovalStatus
                                     });
 
             // 3. Sắp xếp (Sorting)
@@ -156,14 +159,17 @@ namespace DocumentSharingAPI.Controllers
             }
 
             // 2. Nhóm các báo cáo theo DocumentId
-            var groupedQuery = query.GroupBy(r => new { r.DocumentId, r.Document.Title })
+            var groupedQuery = query.GroupBy(r => new { r.DocumentId, r.Document.Title, r.Document.IsLock, r.Document.ApprovalStatus }) // Group thêm IsLock, Status
                                     .Select(g => new GroupedReportDto
                                     {
                                         DocumentId = g.Key.DocumentId,
                                         DocumentTitle = g.Key.Title,
                                         ReportCount = g.Count(),
                                         LatestReportDate = g.Max(r => r.ReportedAt),
-                                        Reasons = g.Select(r => r.Reason).Distinct().ToList()
+                                        Reasons = g.Select(r => r.Reason).Distinct().ToList(),
+                                        // Map dữ liệu
+                                        IsLocked = g.Key.IsLock,
+                                        ApprovalStatus = g.Key.ApprovalStatus
                                     });
 
             // 3. Sắp xếp (Sorting)
