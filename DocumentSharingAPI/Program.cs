@@ -14,8 +14,10 @@ using DocumentSharingAPI.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Configure Kestrel to use specific URLs
-builder.WebHost.UseUrls("https://localhost:7013");
+if (builder.Environment.IsDevelopment())
+{
+    builder.WebHost.UseUrls("https://localhost:7013");
+}
 
 // Configure logging
 builder.Logging.ClearProviders();
@@ -69,7 +71,7 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", corsBuilder =>
     {
-        corsBuilder.WithOrigins("http://localhost:5173", "https://localhost:5173")
+        corsBuilder.WithOrigins("http://localhost:5173", "https://localhost:5173", "https://docsharing.me")
                    .AllowAnyMethod()
                    .AllowAnyHeader()
                    .AllowCredentials();
@@ -228,45 +230,23 @@ builder.Services.AddSwaggerGen(c =>
 
 var app = builder.Build();
 
-// Thêm middleware để thiết lập Cross-Origin-Opener-Policy
-app.Use(async (context, next) =>
-{
-    context.Response.Headers["Cross-Origin-Opener-Policy"] = "unsafe-none";
-    context.Response.Headers["Cross-Origin-Embedder-Policy"] = "require-corp";
-    await next();
-});
-// Ensure Files directory exists
-var filesPath = Path.Combine(Directory.GetCurrentDirectory(), "Files");
-if (!Directory.Exists(filesPath))
-{
-    Directory.CreateDirectory(filesPath);
-}
-
 // Configure HTTP request pipeline
 if (app.Environment.IsDevelopment())
 {
-    app.UseSwagger();
-    app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "DocumentSharingAPI v1"));
     app.UseDeveloperExceptionPage();
 }
+app.UseSwagger();
+app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "DocumentSharingAPI v1"));
 
 app.UseHttpsRedirection();
 
-// Serve static files
-app.UseStaticFiles(new StaticFileOptions
-{
-    FileProvider = new PhysicalFileProvider(filesPath),
-    RequestPath = "/Files"
-});
-// app.UseStaticFiles(); // Removed to avoid wwwroot requirement
 app.UseCors("AllowFrontend");
 app.UseRouting();
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Thêm route mặc định chuyển hướng đến Swagger
 app.MapGet("/", () => Results.Redirect("/swagger"));
-
+app.MapGet("/health", () => Results.Ok("OK"));
 app.MapControllers();
 
 app.Run();
