@@ -5,6 +5,7 @@ using System.Linq;
 using System;
 using DocumentSharingAPI.Repositories;
 using DocumentSharingAPI.Models;
+using DocumentSharingAPI.Models.DTO;
 using System.Collections.Generic;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
@@ -28,13 +29,24 @@ namespace DocumentSharingAPI.Services
             _geminiProModel = new GenerativeModel(apiKey: _apiKey, model: "gemini-2.5-flash-lite");
         }
 
-        public async Task<string> GetChatbotResponseAsync(string userMessage, int userId)
+        public async Task<string> GetChatbotResponseAsync(string userMessage, int userId, List<ChatMessageDto>? history)
         {
             var user = await _userRepository.GetByIdAsync(userId);
             if (user == null)
             {
                 return "Không tìm thấy thông tin người dùng. Vui lòng đăng nhập lại.";
             }
+
+            // === BẮT ĐẦU ĐOẠN SỬA LỖI ===
+            // Kiểm tra xem đã qua ngày mới chưa. Nếu qua rồi thì coi như chưa dùng lượt nào (Reset tạm thời để tính toán)
+            if (user.LastDownloadResetDate.Date < DateTime.Now.Date)
+            {
+                user.RegularDownloadsUsedToday = 0;
+                user.VipDownloadsUsedToday = 0;
+                // Chúng ta chỉ cập nhật biến user trong bộ nhớ để Chatbot trả lời đúng.
+                // Việc cập nhật vào Database sẽ do hàm Download thực hiện khi người dùng thực sự tải file.
+            }
+            // === KẾT THÚC ĐOẠN SỬA LỖI ===
 
             // Lấy thông tin upload/download
             var uploads = await _userDocumentRepository.GetByUserIdAndActionAsync(userId, "Upload");
@@ -50,18 +62,39 @@ namespace DocumentSharingAPI.Services
 
             string topDocsString = topDocs.Any() ? string.Join("\n", topDocs) : "Chưa có tài liệu nào";
 
-            // Xây dựng ngữ cảnh động về User
+            // Xây dựng ngữ cảnh động về User với tính toán số liệu chính xác
             StringBuilder userContextBuilder = new StringBuilder();
             userContextBuilder.AppendLine($" - Tên: {user.FullName}");
             userContextBuilder.AppendLine($" - Email: {user.Email}");
-            userContextBuilder.AppendLine($" - Loại tài khoản: {(user.IsVip ? "VIP" : "Thường")}");
-            if (user.IsVip && user.VipExpiryDate.HasValue)
+            
+            // Xác định trạng thái VIP thực tế
+            bool isVipValid = user.IsVip && user.VipExpiryDate.HasValue && user.VipExpiryDate.Value > DateTime.Now;
+            
+            // Thiết lập giới hạn dựa trên loại tài khoản
+            int dailyRegularLimit = isVipValid ? 10 : 2;
+            int dailyVipLimit = isVipValid ? 10 : 0;
+            
+            // Tính toán số lượt còn lại (không âm)
+            int remainingRegularToday = Math.Max(dailyRegularLimit - user.RegularDownloadsUsedToday, 0);
+            int remainingVipToday = Math.Max(dailyVipLimit - user.VipDownloadsUsedToday, 0);
+            
+            // Hiển thị loại tài khoản
+            userContextBuilder.AppendLine($" - Loại tài khoản: {(isVipValid ? "VIP" : "Tài khoản Thường")}");
+            if (isVipValid && user.VipExpiryDate.HasValue)
             {
                 userContextBuilder.AppendLine($" - Hết hạn VIP: {user.VipExpiryDate.Value:dd/MM/yyyy}");
             }
-            userContextBuilder.AppendLine($" - Lượt tải thường đã dùng: {user.RegularDownloadsUsedToday}/2");
-            userContextBuilder.AppendLine($" - Lượt tải VIP đã dùng: {user.VipDownloadsUsedToday}/10");
-            userContextBuilder.AppendLine($" - Kho dư (Bonus): {user.RegularBonusDownloads} thường, {user.VipBonusDownloads} VIP");
+            
+            // Hiển thị số lượt tải còn lại rõ ràng
+            userContextBuilder.AppendLine($" - TỔNG Lượt tải THƯỜNG còn lại: {remainingRegularToday} (Hàng ngày) + {user.RegularBonusDownloads} (Kho dư)");
+            userContextBuilder.AppendLine($" - TỔNG Lượt tải VIP còn lại: {remainingVipToday} (Hàng ngày) + {user.VipBonusDownloads} (Kho dư)");
+            
+            // Thêm chú thích quan trọng cho user thường
+            if (!isVipValid)
+            {
+                userContextBuilder.AppendLine($" - LƯU Ý QUAN TRỌNG: Người dùng này KHÔNG PHẢI VIP. Họ không có lượt tải VIP hàng ngày, chỉ có thể tải VIP nếu có điểm Bonus VIP.");
+            }
+            
             userContextBuilder.AppendLine($" - Tổng tài liệu đã upload: {uploads.Count()}");
             userContextBuilder.AppendLine($" - Top 5 tài liệu hot nhất của họ:");
             userContextBuilder.AppendLine($"{topDocsString}");
@@ -98,9 +131,14 @@ Cơ sở dữ liệu kiến thức (FAQ):
 - Giới hạn Free: 2 lượt/ngày. Reset lúc 00:00.
 - Tăng lượt: Upload tài liệu để nhận Bonus hoặc mua VIP.
 - Tài liệu VIP Only: Chỉ dành cho tài khoản VIP hoặc dùng điểm VIP Bonus.
+- QUY TẮC QUAN TRỌNG VỀ LƯỢT TẢI:
+  * Khi người dùng hỏi 'còn bao nhiêu lượt tải', hãy ưu tiên trả lời số lượng lượt tải Thường trước.
+  * Nếu họ không phải VIP và không có Bonus VIP, hãy nhắc họ nâng cấp VIP để tải tài liệu cao cấp.
+  * Đừng cộng gộp lượt tải Thường và VIP làm một trừ khi giải thích rõ.
+  * Nếu người dùng là tài khoản Thường, TUYỆT ĐỐI KHÔNG cộng gộp lượt tải VIP vào tổng số lượt tải, trừ khi họ có điểm Bonus VIP. Hãy nói rõ họ chỉ được tải tài liệu thường.
 
 4. Gói VIP & Thanh toán:
-- Quyền lợi: Tải 13 file/ngày (8 thường + 5 VIP), Xem trước 15 trang PDF, Không quảng cáo, Duyệt bài ưu tiên.
+- Quyền lợi thực tế: Tổng 20 file/ngày (Chia làm: 10 file Thường + 10 file VIP), Xem trước 10 trang PDF, Không quảng cáo, Duyệt bài ưu tiên.
 - Các gói: Tháng (49k), 3 Tháng (129k), Năm (399k).
 - Cách mua: Menu 'Nâng cấp tài khoản' > Chọn gói > Thanh toán (Test Mode).
 - Kiểm tra hạn: Xem trong Profile hoặc hỏi trực tiếp tôi.
@@ -113,7 +151,7 @@ Cơ sở dữ liệu kiến thức (FAQ):
 - Badge: Biểu tượng cạnh tên (ví dụ: Top Uploader, Top Commenter).
 
 6. Sự cố thường gặp:
-- Lỗi Preview: Do file lỗi hoặc vượt quá giới hạn trang xem thử (Free: 2 trang, VIP: 15 trang) -> Hãy tải về để xem full.
+- Lỗi Preview: Do file lỗi hoặc vượt quá giới hạn trang xem thử (Free: 2 trang, VIP: 10 trang) -> Hãy tải về để xem full.
 - Tài liệu 'Tạm ngưng' (Suspended): Do bị báo cáo nhiều lần -> Chờ Admin xử lý.
 - Lỗi Upload: Kiểm tra lại định dạng và dung lượng file (<50MB).
 
@@ -130,7 +168,31 @@ Hãy trả lời câu hỏi sau của người dùng dựa trên thông tin trê
 
             try
             {
-                var response = await _geminiProModel.GenerateContentAsync(systemInstruction);
+                // Xây dựng lịch sử hội thoại để đưa vào prompt
+                string conversationHistory = "";
+                if (history != null && history.Any())
+                {
+                    // Chỉ lấy 5-10 tin gần nhất để tiết kiệm token
+                    var recentHistory = history.TakeLast(10).ToList();
+                    
+                    var historyBuilder = new StringBuilder();
+                    historyBuilder.AppendLine("\n\nLịch sử hội thoại gần đây:");
+                    foreach (var msg in recentHistory)
+                    {
+                        // Chỉ lấy tin nhắn có nội dung không rỗng
+                        if (!string.IsNullOrWhiteSpace(msg.Text))
+                        {
+                            var rolePrefix = msg.Role == "user" ? "User" : "Assistant";
+                            historyBuilder.AppendLine($"{rolePrefix}: {msg.Text}");
+                        }
+                    }
+                    conversationHistory = historyBuilder.ToString();
+                }
+
+                // Kết hợp system instruction với lịch sử hội thoại và câu hỏi hiện tại
+                string finalPrompt = $"{systemInstruction}{conversationHistory}\n\nUser Question: {userMessage}";
+
+                var response = await _geminiProModel.GenerateContentAsync(finalPrompt);
                 return response.Text;
             }
             catch (Exception ex)

@@ -1,7 +1,11 @@
-﻿namespace DocumentSharingAPI.Services
+﻿using System.Collections.Generic;
+using DocumentSharingAPI.Models.DTO;
+
+namespace DocumentSharingAPI.Services
 {
     public interface IGeminiChatService
     {
-        Task<string> GetChatbotResponseAsync(string userMessage, int userId);
+        // Thêm tham số history
+        Task<string> GetChatbotResponseAsync(string userMessage, int userId, List<ChatMessageDto>? history);
     }
 }
