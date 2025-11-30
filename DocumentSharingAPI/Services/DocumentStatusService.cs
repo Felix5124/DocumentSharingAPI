@@ -1,4 +1,3 @@
-// DocumentSharingAPI/Services/DocumentStatusService.cs
 using DocumentSharingAPI.Models;
 using DocumentSharingAPI.Repositories;
 using Microsoft.EntityFrameworkCore;
@@ -15,7 +14,6 @@ namespace DocumentSharingAPI.Services
         private readonly IUserRepository _userRepository;
         private readonly AppDbContext _context;
 
-
         public DocumentStatusService(IDocumentRepository documentRepository, INotificationRepository notificationRepository, IUserRepository userRepository, AppDbContext context)
         {
             _documentRepository = documentRepository;
@@ -24,62 +22,54 @@ namespace DocumentSharingAPI.Services
             _context = context;
         }
 
+        // --- LOGIC HẠ CẤP (DEMOTE: SemiApproved/Approved -> Pending) ---
         public async Task CheckAndPotentiallyDemoteDocumentAsync(int documentId)
         {
             var document = await _documentRepository.GetByIdAsync(documentId);
+            
+            // Chỉ xử lý tài liệu đang hoạt động (SemiApproved hoặc Approved)
             if (document == null || (document.ApprovalStatus != "SemiApproved" && document.ApprovalStatus != "Approved"))
             {
-                // Không cần xử lý nếu tài liệu không tồn tại hoặc đã ở trạng thái Pending/Rejected/Suspended
                 return;
             }
 
             bool shouldChangeToPending = false;
+            int reports = document.ReportCount;
+
+            // Lấy số người dùng thực tế đã tải (tránh 1 người tải nhiều lần làm loãng tỉ lệ)
+            int uniqueDownloads = await _context.UserDocuments
+                .Where(ud => ud.DocumentId == documentId && ud.ActionType == "Download")
+                .Select(ud => ud.UserId)
+                .Distinct()
+                .CountAsync();
+
+            // Tránh chia cho 0, mặc định là 1 nếu chưa có ai tải (để tính toán không bị lỗi)
+            if (uniqueDownloads == 0) uniqueDownloads = 1; 
+            
+            double reportRatio = (double)reports / uniqueDownloads;
 
             if (document.ApprovalStatus == "SemiApproved")
             {
-                // Đếm số người dùng duy nhất đã tải tài liệu này
-                int uniqueDownloads = await _context.UserDocuments
-                    .Where(ud => ud.DocumentId == documentId && ud.ActionType == "Download")
-                    .Select(ud => ud.UserId)
-                    .Distinct()
-                    .CountAsync();
-
-                // GIỮ NGUYÊN LOGIC CŨ cho tài liệu chưa được duyệt hoàn toàn, nhưng sử dụng uniqueDownloads
-                // [0-1] download + từ 1 report trở lên
-                // [3-5] download + từ 2 report trở lên
-                // [6-...] download + từ [6+...] report trở lên
-                if ((uniqueDownloads <= 1 && document.ReportCount >= 1) ||
-                    (uniqueDownloads > 2 && uniqueDownloads <= 5 && document.ReportCount >= 2) ||
-                    (uniqueDownloads > 5 && document.ReportCount >= (uniqueDownloads / 1.0)))
+                // Logic cho tài liệu "Chưa kiểm duyệt": Nghiêm ngặt hơn
+                // 1. Giai đoạn ít tải (< 20): Chỉ cần 2 báo cáo là gỡ để an toàn.
+                if (uniqueDownloads < 20 && reports >= 2)
+                {
+                    shouldChangeToPending = true;
+                }
+                // 2. Giai đoạn nhiều tải (>= 20): Nếu tỷ lệ báo cáo >= 10% -> Gỡ
+                else if (uniqueDownloads >= 20 && reportRatio >= 0.10)
                 {
                     shouldChangeToPending = true;
                 }
             }
             else if (document.ApprovalStatus == "Approved")
             {
-                // === BẮT ĐẦU LOGIC CẢI TIẾN CHO TÀI LIỆU ĐÃ DUYỆT ===
-
-                // Đếm số người dùng duy nhất đã tải tài liệu này
-                int uniqueDownloads = await _context.UserDocuments
-                    .Where(ud => ud.DocumentId == documentId && ud.ActionType == "Download")
-                    .Select(ud => ud.UserId)
-                    .Distinct()
-                    .CountAsync();
-
-                // 1. Ngưỡng cơ bản là 10 báo cáo
-                const int baseReportThreshold = 1;
-
-                const int downloadsPerExtraReport = 1;
-                int dynamicThreshold = baseReportThreshold + (uniqueDownloads / downloadsPerExtraReport);
-                // 1 + (5 / 1) = 6
-                //vd số unique download =50 thì 10 + (50 / 10) = 15 (15 report -> pending)
-                // So sánh số báo cáo hiện tại với ngưỡng linh động
-                if (document.ReportCount >= dynamicThreshold)
+                // Logic cho tài liệu "ĐÃ DUYỆT": Nới lỏng hơn (để tránh bị spam report phá hoại)
+                // Điều kiện: Phải có ít nhất 5 báo cáo VÀ tỷ lệ báo cáo >= 15%
+                if (reports >= 5 && reportRatio >= 0.15)
                 {
                     shouldChangeToPending = true;
                 }
-
-                // === KẾT THÚC LOGIC CẢI TIẾN ===
             }
 
             if (shouldChangeToPending)
@@ -87,15 +77,14 @@ namespace DocumentSharingAPI.Services
                 document.ApprovalStatus = "Pending";
                 await _documentRepository.UpdateAsync(document);
 
+                // Gửi thông báo cho Admin
                 var adminUsers = (await _userRepository.GetAllAsync()).Where(u => u.IsAdmin);
-
-                // Gửi thông báo đến từng quản trị viên
                 foreach (var admin in adminUsers)
                 {
                     var adminNotification = new Notification
                     {
-                        UserId = admin.UserId, // Sử dụng UserId của từng admin
-                        Message = $"Tài liệu '{document.Title}' đã bị chuyển sang trạng thái Pending do có {document.ReportCount} báo cáo.",
+                        UserId = admin.UserId,
+                        Message = $"Cảnh báo: Tài liệu '{document.Title}' có tỷ lệ báo cáo cao ({reports} reports/{uniqueDownloads} downloads). Đã chuyển về Pending.",
                         DocumentId = document.DocumentId,
                         SentAt = DateTime.Now,
                         IsRead = false
@@ -107,7 +96,7 @@ namespace DocumentSharingAPI.Services
                 var uploaderNotification = new Notification
                 {
                     UserId = document.UploadedBy,
-                    Message = $"Tài liệu '{document.Title}' của bạn đã được chuyển sang trạng thái chờ xử lý do có nhiều báo cáo vi phạm.",
+                    Message = $"Tài liệu '{document.Title}' của bạn bị tạm khóa do nhận nhiều báo cáo vi phạm từ cộng đồng.",
                     DocumentId = document.DocumentId,
                     SentAt = DateTime.Now,
                     IsRead = false
@@ -116,11 +105,12 @@ namespace DocumentSharingAPI.Services
             }
         }
 
+        // --- LOGIC THĂNG CẤP (PROMOTE: SemiApproved -> Approved) ---
         public async Task CheckAndPotentiallyPromoteDocumentAsync(int documentId)
         {
             var document = await _documentRepository.GetByIdAsync(documentId);
 
-            // Chỉ xử lý các tài liệu đang ở trạng thái bán duyệt
+            // Chỉ xử lý tài liệu đang ở trạng thái "Chưa kiểm duyệt" (SemiApproved)
             if (document == null || document.ApprovalStatus != "SemiApproved")
             {
                 return;
@@ -128,7 +118,6 @@ namespace DocumentSharingAPI.Services
 
             bool shouldBeApproved = false;
             
-            // Đếm số người dùng duy nhất đã tải tài liệu này
             int uniqueDownloads = await _context.UserDocuments
                 .Where(ud => ud.DocumentId == documentId && ud.ActionType == "Download")
                 .Select(ud => ud.UserId)
@@ -137,49 +126,31 @@ namespace DocumentSharingAPI.Services
 
             int reports = document.ReportCount;
 
-            // --- LOGIC LINH HOẠT ---
-            // Giai đoạn 1: Dưới 50 lượt tải -> Yêu cầu tuyệt đối không có báo cáo
-            // [1-2] download + 0 report
-            if (uniqueDownloads >= 1 && uniqueDownloads <= 2)
-            {
-                if (reports == 0)
-                {
-                    shouldBeApproved = true;
-                }
-            }
-            // Giai đoạn 2: Từ 51 đến 200 lượt tải -> Chấp nhận 1 báo cáo
-            // [3-5] + 1 report trở xuống
-            else if (uniqueDownloads > 2 && uniqueDownloads <= 5)
-            {
-                if (reports <= 1)
-                {
-                    shouldBeApproved = true;
-                }
-            }
-            // Giai đoạn 3: Trên 200 lượt tải -> Xét theo tỷ lệ (ví dụ: tỷ lệ báo cáo < 2%)
-            // trên 5 và tỷ lệ báo cáo < 50%
-            else if (uniqueDownloads > 5)
+            // === LOGIC DUYỆT DỰA TRÊN PHẦN TRĂM (%) ===
+            
+            // Điều kiện tiên quyết: Phải có ít nhất 40 lượt tải để dữ liệu đáng tin cậy.
+            if (uniqueDownloads >= 40)
             {
                 double reportRatio = (double)reports / uniqueDownloads;
-                // Chấp nhận dưới 2% báo cáo
-                // Chấp nhận dưới 50% báo cáo
-                if (reportRatio < 0.5)
+
+                // Ngưỡng duyệt: Tỷ lệ báo cáo <= 3% (0.03)
+                // Cho phép sai số nhỏ (bấm nhầm report)
+                if (reportRatio <= 0.03)
                 {
                     shouldBeApproved = true;
                 }
             }
-            // --- KẾT THÚC LOGIC LINH HOẠT ---
 
             if (shouldBeApproved)
             {
                 document.ApprovalStatus = "Approved";
                 await _documentRepository.UpdateAsync(document);
 
-                // Gửi thông báo cho người đăng
+                // Gửi thông báo chúc mừng
                 var notification = new Notification
                 {
                     UserId = document.UploadedBy,
-                    Message = $"Tài liệu '{document.Title}' của bạn đã được tự động duyệt nhờ tín hiệu tốt từ cộng đồng.",
+                    Message = $"Chúc mừng! Tài liệu '{document.Title}' đã đạt độ tin cậy cao ({uniqueDownloads} lượt tải, tỷ lệ báo cáo thấp) và chính thức được Duyệt.",
                     DocumentId = document.DocumentId,
                     SentAt = DateTime.Now,
                     IsRead = false

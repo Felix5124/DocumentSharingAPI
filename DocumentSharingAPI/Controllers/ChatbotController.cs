@@ -1,5 +1,6 @@
 ﻿using DocumentSharingAPI.Repositories;
 using DocumentSharingAPI.Services;
+using DocumentSharingAPI.Models.DTO;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using System.Security.Claims;
@@ -22,6 +23,8 @@ namespace DocumentSharingAPI.Controllers
         {
             public string Message { get; set; }
             public int UserId { get; set; } // Frontend will send this
+            // Thêm trường này để nhận lịch sử chat từ frontend
+            public List<ChatMessageDto>? History { get; set; }
         }
 
         [HttpPost("query")]
@@ -46,7 +49,7 @@ namespace DocumentSharingAPI.Controllers
             }
             int internalUserId = user.UserId;
 
-            var response = await _chatService.GetChatbotResponseAsync(query.Message, query.UserId);
+            var response = await _chatService.GetChatbotResponseAsync(query.Message, query.UserId, query.History);
             return Ok(new { reply = response });
         }
     }

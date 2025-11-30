@@ -219,7 +219,8 @@ namespace DocumentSharingAPI.Repositories
 
         public async Task<bool> CanDownloadAsync(int userId, bool isVipDocument)
         {
-            var user = await GetByIdAsync(userId);
+            var user = await CheckAndResetDailyLimitsAsync(userId);
+
             if (user == null) return false;
 
             // Reset daily downloads if needed
@@ -284,5 +285,25 @@ namespace DocumentSharingAPI.Repositories
                 await UpdateAsync(user);
             }
         }
+
+        public async Task<User> CheckAndResetDailyLimitsAsync(int userId)
+        {
+            var user = await GetByIdAsync(userId);
+            if (user == null) return null;
+
+            // Kiểm tra nếu ngày reset cuối cùng nhỏ hơn hôm nay
+            if (user.LastDownloadResetDate.Date < DateTime.Today)
+            {
+                user.VipDownloadsUsedToday = 0;
+                user.RegularDownloadsUsedToday = 0;
+                user.LastDownloadResetDate = DateTime.Today;
+
+                // Lưu thay đổi xuống database ngay lập tức
+                await UpdateAsync(user);
+            }
+
+            return user;
+        }
+
     }
 }
