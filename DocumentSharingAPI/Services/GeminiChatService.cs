@@ -316,18 +316,8 @@ Câu hỏi của người dùng: '{userMessage}'
             }
             catch (Exception ex)
             {
-                try
-                {
-                    // Ghi lỗi vào file error_log.txt nằm ngay thư mục gốc của ứng dụng trên server
-                    string logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "chatbot_error_log.txt");
-                    string errorMessage = $"[{DateTime.Now}] ERROR: {ex.Message}\nSTACK TRACE: {ex.StackTrace}\n\n";
-                    System.IO.File.AppendAllText(logPath, errorMessage);
-                }
-                catch { /* Bỏ qua nếu không ghi được file */ }
-                // ---------------------------------------
-
                 Console.WriteLine($"Gemini Chat Error: {ex.Message}");
-                return "Hiện tại hệ thống AI đang quá tải hoặc gặp sự cố kết nối...";
+                return "Hiện tại hệ thống AI đang quá tải hoặc gặp sự cố kết nối. Bạn vui lòng thử lại sau giây lát nhé!";
             }
         }
     }
