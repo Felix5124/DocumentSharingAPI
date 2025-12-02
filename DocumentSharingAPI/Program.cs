@@ -69,7 +69,12 @@ builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", corsBuilder =>
     {
-        corsBuilder.WithOrigins("http://localhost:5173", "https://localhost:5173")
+        corsBuilder.WithOrigins(
+                       "http://localhost:5173", 
+                       "https://localhost:5173",
+                       "https://docsharing.me",
+                       "http://docsharing.me"
+                   )
                    .AllowAnyMethod()
                    .AllowAnyHeader()
                    .AllowCredentials();
