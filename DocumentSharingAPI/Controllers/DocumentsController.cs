@@ -361,43 +361,44 @@ namespace DocumentSharingAPI.Controllers
         {
             try
             {
-                Console.WriteLine($"Attempting to delete document with ID: {id}");
                 var document = await _documentRepository.GetByIdAsync(id);
                 if (document == null)
                 {
-                    Console.WriteLine($"Document with ID {id} not found.");
                     return NotFound("Tài liệu không tồn tại.");
                 }
 
-                // Xóa file tài liệu trên Azure Blob
-                if (!string.IsNullOrEmpty(document.FileUrl))
-                {
-                    // Remove prefix "documents/" if present để tránh double path
-                    var blobPathToDelete = document.FileUrl.StartsWith("documents/")
-                        ? document.FileUrl.Substring("documents/".Length)
-                        : document.FileUrl;
-                    await _blob.DeleteAsync("documents", blobPathToDelete);
-                    Console.WriteLine($"Deleted document blob: {document.FileUrl}");
-                }
-
-                if (!string.IsNullOrEmpty(document.CoverImageUrl))
-                {
-                    var path = document.CoverImageUrl.Trim();
-                    var blobName = NormalizeCoverBlobName(path);
-                    if (IsUserUploadedCover(blobName))
-                    {
-                        await _blob.DeleteAsync("covers", blobName);
-                        Console.WriteLine($"[Delete] Deleted cover blob: {blobName}");
-                    }
-                    else
-                    {
-                        Console.WriteLine($"[Delete] Skip deleting non-upload cover: {blobName}");
-                    }
-                }
-
-
+                // Xóa database record trước để response nhanh cho client
                 await _documentRepository.DeleteAsync(id);
-                Console.WriteLine($"Document {id} deleted successfully.");
+
+                // Xóa file tài liệu và cover trên Azure Blob bất đồng bộ (không chờ)
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        if (!string.IsNullOrEmpty(document.FileUrl))
+                        {
+                            var blobPathToDelete = document.FileUrl.StartsWith("documents/")
+                                ? document.FileUrl.Substring("documents/".Length)
+                                : document.FileUrl;
+                            await _blob.DeleteAsync("documents", blobPathToDelete);
+                        }
+
+                        if (!string.IsNullOrEmpty(document.CoverImageUrl))
+                        {
+                            var path = document.CoverImageUrl.Trim();
+                            var blobName = NormalizeCoverBlobName(path);
+                            if (IsUserUploadedCover(blobName))
+                            {
+                                await _blob.DeleteAsync("covers", blobName);
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Background blob deletion error for document {id}: {ex.Message}");
+                    }
+                });
+
                 return NoContent();
             }
             catch (Exception ex)
@@ -1050,7 +1051,8 @@ namespace DocumentSharingAPI.Controllers
                 else
                 {
                     // === HÀNH ĐỘNG MỞ KHÓA ===
-                    document.ApprovalStatus = "SemiApproved";
+                    // Admin đã kiểm tra và cho phép mở khóa = tài liệu đã được duyệt
+                    document.ApprovalStatus = "Approved";
                     document.IsLock = false;
                     document.ReportCount = 0; // Reset report count khi mở khóa
 
@@ -1128,6 +1130,33 @@ namespace DocumentSharingAPI.Controllers
             return Ok(result);
         }
 
+        [HttpGet("{id}/check-downloaded")]
+        public async Task<IActionResult> CheckUserHasDownloaded(int id, [FromQuery] int userId)
+        {
+            try
+            {
+                if (userId <= 0)
+                    return BadRequest(new { hasDownloaded = false, message = "UserId không hợp lệ." });
+
+                var document = await _documentRepository.GetByIdAsync(id);
+                if (document == null)
+                    return NotFound(new { hasDownloaded = false, message = "Tài liệu không tồn tại." });
+
+                // Kiểm tra xem user có phải là chủ sở hữu tài liệu không
+                if (document.UploadedBy == userId)
+                    return Ok(new { hasDownloaded = true, isOwner = true });
+
+                // Kiểm tra trong bảng UserDocuments xem có record Download không
+                var userDocument = await _userDocumentRepository.GetByUserIdDocumentIdAndActionAsync(userId, id, "Download");
+                
+                return Ok(new { hasDownloaded = userDocument != null, isOwner = false });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { hasDownloaded = false, message = $"Lỗi server: {ex.Message}" });
+            }
+        }
+
 
 
         [HttpPut("{id}/reset-reports")]
@@ -1157,12 +1186,13 @@ namespace DocumentSharingAPI.Controllers
                 document.ReportCount = 0;
                 document.IsLock = false; // <--- QUAN TRỌNG: Phải mở khóa
                 
-                // Nếu đang bị treo hoặc chờ duyệt, đưa về SemiApproved để hoạt động lại
+                // Admin đã kiểm tra và reset reports = tài liệu đã được duyệt
+                // Không cần phải quay về SemiApproved nữa
                 if (document.ApprovalStatus == "Suspended" || document.ApprovalStatus == "Pending")
                 {
-                    document.ApprovalStatus = "SemiApproved";
+                    document.ApprovalStatus = "Approved";
                 }
-                // Nếu đang là Approved thì giữ nguyên
+                // Nếu đang là Approved hoặc SemiApproved thì chuyển thành Approved
 
                 _context.Documents.Update(document);
 
