@@ -804,11 +804,11 @@ namespace DocumentSharingAPI.Controllers
                 {
                     if (document.IsVipOnly)
                     {
-                        return BadRequest(new { message = "Bạn không thể tải tài liệu VIP này. Vui lòng nâng cấp tài khoản VIP hoặc sử dụng lượt tải VIP bonus từ việc upload tài liệu." });
+                        return BadRequest(new { message = "Bạn không thể tải tài liệu Premium này. Vui lòng nâng cấp tài khoản Premium hoặc sử dụng lượt tải Premium bonus từ việc upload tài liệu." });
                     }
                     else
                     {
-                        return BadRequest(new { message = "Bạn đã hết lượt tải tài liệu thường hôm nay (2 lượt/ngày cho tài khoản thường). Vui lòng nâng cấp VIP để có 10 lượt/ngày hoặc upload tài liệu để nhận bonus download." });
+                        return BadRequest(new { message = "Bạn đã hết lượt tải tài liệu thường hôm nay (2 lượt/ngày cho tài khoản thường). Vui lòng nâng cấp Premium để có 10 lượt/ngày hoặc upload tài liệu để nhận bonus download." });
                     }
                 }
 
