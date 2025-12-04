@@ -51,13 +51,13 @@ namespace DocumentSharingAPI.Services
             if (document.ApprovalStatus == "SemiApproved")
             {
                 // Logic cho tài liệu "Chưa kiểm duyệt": Nghiêm ngặt hơn
-                // 1. Giai đoạn ít tải (< 20): Chỉ cần 2 báo cáo là gỡ để an toàn.
-                if (uniqueDownloads < 20 && reports >= 2)
+                // 1. Giai đoạn ít tải (< 20): Chỉ cần 3 báo cáo là gỡ để an toàn.
+                if (uniqueDownloads < 20 && reports >= 3)
                 {
                     shouldChangeToPending = true;
                 }
-                // 2. Giai đoạn nhiều tải (>= 20): Nếu tỷ lệ báo cáo >= 10% -> Gỡ
-                else if (uniqueDownloads >= 20 && reportRatio >= 0.10)
+                // 2. Giai đoạn nhiều tải (>= 20): Nếu tỷ lệ báo cáo >= 15% -> Gỡ
+                else if (uniqueDownloads >= 20 && reportRatio > 0.15)
                 {
                     shouldChangeToPending = true;
                 }
@@ -65,8 +65,8 @@ namespace DocumentSharingAPI.Services
             else if (document.ApprovalStatus == "Approved")
             {
                 // Logic cho tài liệu "ĐÃ DUYỆT": Nới lỏng hơn (để tránh bị spam report phá hoại)
-                // Điều kiện: Phải có ít nhất 5 báo cáo VÀ tỷ lệ báo cáo >= 15%
-                if (reports >= 5 && reportRatio >= 0.15)
+                // Điều kiện: tỷ lệ báo cáo >= 15%
+                if (reports >= 8 && reportRatio >= 0.20)
                 {
                     shouldChangeToPending = true;
                 }
@@ -129,13 +129,13 @@ namespace DocumentSharingAPI.Services
             // === LOGIC DUYỆT DỰA TRÊN PHẦN TRĂM (%) ===
             
             // Điều kiện tiên quyết: Phải có ít nhất 40 lượt tải để dữ liệu đáng tin cậy.
-            if (uniqueDownloads >= 40)
+            if (uniqueDownloads >= 20)
             {
                 double reportRatio = (double)reports / uniqueDownloads;
 
-                // Ngưỡng duyệt: Tỷ lệ báo cáo <= 3% (0.03)
+                // Ngưỡng duyệt: Tỷ lệ báo cáo <= 10% (0.1)
                 // Cho phép sai số nhỏ (bấm nhầm report)
-                if (reportRatio <= 0.03)
+                if (reportRatio <= 0.10)
                 {
                     shouldBeApproved = true;
                 }

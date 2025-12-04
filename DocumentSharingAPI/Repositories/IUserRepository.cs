@@ -21,5 +21,8 @@ namespace DocumentSharingAPI.Repositories
         Task AddBonusDownloadAsync(int userId, bool isVipBonus);
         Task<User> CheckAndResetDailyLimitsAsync(int userId);
 
+        // Phân trang tài khoản người dùng dành cho admin
+        Task<(IEnumerable<User>, int)> GetAdminUsersAsync(int page, int pageSize, string keyword, bool? isLocked, string? role);
+
     }
 }

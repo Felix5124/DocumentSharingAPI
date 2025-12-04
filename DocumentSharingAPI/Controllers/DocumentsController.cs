@@ -118,71 +118,108 @@ namespace DocumentSharingAPI.Controllers
 
         [HttpGet("admin/list")]
         public async Task<IActionResult> GetDocumentsForAdmin(
-            [FromQuery] int page = 1,
-            [FromQuery] int pageSize = 15,
-            [FromQuery] string keyword = "",
-            [FromQuery] int? categoryId = null,
-            [FromQuery] string? status = null,
-            [FromQuery] bool? isLocked = null,
-            [FromQuery] string? sortBy = "newest")
+    [FromQuery] int page = 1,
+    [FromQuery] int pageSize = 15,
+    [FromQuery] string keyword = "",
+    [FromQuery] int? categoryId = null,
+    [FromQuery] string? status = null,
+    [FromQuery] bool? isLocked = null,
+    [FromQuery] string? sortBy = "newest")
         {
-            var (documents, total) = await _documentRepository.GetAdminDocumentsAsync(page, pageSize, keyword, categoryId, status, isLocked, sortBy);
-
-            // Tính toán lượt tải unique CHỈ CHO 15 tài liệu này (thay vì toàn bộ DB)
-            var docIds = documents.Select(d => d.DocumentId).ToList();
-
-            // Truy vấn lượt tải unique chỉ cho các tài liệu này
-            var uniqueDownloadCounts = await _context.UserDocuments
-                .Where(ud => docIds.Contains(ud.DocumentId) && ud.ActionType == "Download")
-                .Join(_context.Documents,
-                      ud => ud.DocumentId,
-                      doc => doc.DocumentId,
-                      (ud, doc) => new { UserDocument = ud, Document = doc })
-                .Where(joined => joined.UserDocument.UserId != joined.Document.UploadedBy)
-                .GroupBy(joined => joined.Document.DocumentId)
-                .Select(g => new
-                {
-                    DocumentId = g.Key,
-                    UniqueCount = g.Select(j => j.UserDocument.UserId).Distinct().Count()
-                })
-                .ToDictionaryAsync(x => x.DocumentId, x => x.UniqueCount);
-
-            var result = new List<object>();
-            foreach (var d in documents)
+            try
             {
-                var user = await _userRepository.GetByIdAsync(d.UploadedBy);
+                // 1. Khởi tạo Query (Lazy Evaluation)
+                var query = _context.Documents.AsNoTracking().AsQueryable();
 
-                int uniqueDownloads = uniqueDownloadCounts.GetValueOrDefault(d.DocumentId, 0);
+                // 2. Áp dụng bộ lọc
+                if (!string.IsNullOrEmpty(keyword))
+                    query = query.Where(d => d.Title.Contains(keyword)); // EF Core tự xử lý SQL LIKE
 
-                result.Add(new
+                if (categoryId.HasValue && categoryId.Value > 0)
+                    query = query.Where(d => d.CategoryId == categoryId.Value);
+
+                if (!string.IsNullOrEmpty(status))
+                    query = query.Where(d => d.ApprovalStatus == status);
+
+                if (isLocked.HasValue)
+                    query = query.Where(d => d.IsLock == isLocked.Value);
+
+                // 3. Đếm tổng số (Query 1: Rất nhanh vì chỉ count index)
+                var total = await query.CountAsync();
+
+                // 4. Sắp xếp
+                // Lưu ý: Sắp xếp dựa trên cột có sẵn trong bảng để tối ưu tốc độ
+                switch (sortBy?.ToLower())
                 {
-                    d.DocumentId,
-                    d.Title,
-                    Tags = d.DocumentTags.Where(dt => dt.Tag != null).Select(dt => new TagDto { TagId = dt.Tag.TagId, Name = dt.Tag.Name }).ToList(),
-                    d.Description,
-                    d.CoverImageUrl,
-                    d.UploadedAt,
-                    d.DownloadCount,
-                    UniqueDownloadCount = uniqueDownloads,
-                    d.FileType,
-                    d.IsVipOnly,
-                    ApprovalStatus = d.ApprovalStatus,
-                    ReportCount = d.ReportCount,
-                    d.IsLock,
-                    d.UploadedBy,
-                    Email = user?.Email ?? "Không xác định"
+                    case "downloads_desc":
+                        query = query.OrderByDescending(d => d.DownloadCount).ThenByDescending(d => d.DocumentId);
+                        break;
+                    case "downloads_asc":
+                        query = query.OrderBy(d => d.DownloadCount).ThenBy(d => d.DocumentId);
+                        break;
+                    case "oldest":
+                        query = query.OrderBy(d => d.UploadedAt).ThenBy(d => d.DocumentId);
+                        break;
+                    default: // newest
+                        query = query.OrderByDescending(d => d.UploadedAt).ThenByDescending(d => d.DocumentId);
+                        break;
+                }
+
+                // 5. Phân trang & Projection (Query 2: Lấy dữ liệu)
+                var data = await query
+                    .Skip((page - 1) * pageSize)
+                    .Take(pageSize)
+                    .Select(d => new
+                    {
+                        d.DocumentId,
+                        d.Title,
+                        d.Description, // Nếu description quá dài, cân nhắc chỉ lấy Substring ở đây
+                        d.CoverImageUrl,
+                        d.UploadedAt,
+                        d.DownloadCount, // Hiển thị tổng lượt click tải
+                        d.FileType,
+                        d.IsVipOnly,
+                        ApprovalStatus = d.ApprovalStatus,
+                        ReportCount = d.ReportCount,
+                        d.IsLock,
+                        d.UploadedBy,
+
+                        // Fix Null Safety cho User
+                        Email = d.User != null ? d.User.Email : "Unknown",
+
+                        // Lấy Tags: EF Core sẽ tự động chuyển thành LEFT JOIN hoặc Subquery tối ưu
+                        Tags = d.DocumentTags.Select(dt => new
+                        {
+                            TagId = dt.Tag.TagId,
+                            Name = dt.Tag.Name
+                        }).ToList(),
+
+                        // Tính toán Unique Download: Logic này chạy hoàn toàn dưới SQL
+                        UniqueDownloadCount = _context.UserDocuments
+                            .Where(ud => ud.DocumentId == d.DocumentId
+                                         && ud.ActionType == "Download"
+                                         && ud.UserId != d.UploadedBy)
+                            .Select(ud => ud.UserId)
+                            .Distinct()
+                            .Count()
+                    })
+                    .ToListAsync();
+
+                // 6. Trả về kết quả
+                return Ok(new
+                {
+                    data,
+                    total,
+                    page,
+                    totalPages = (int)Math.Ceiling((double)total / pageSize)
                 });
             }
-
-            return Ok(new
+            catch (Exception ex)
             {
-                data = result,
-                total,
-                page,
-                totalPages = (int)Math.Ceiling((double)total / pageSize)
-            });
+                Console.WriteLine($"Error getting admin documents: {ex.ToString()}"); // Log full stack trace
+                return StatusCode(500, new { message = "Lỗi máy chủ khi tải danh sách tài liệu." });
+            }
         }
-
         [HttpGet("{id:int}")]
         public async Task<IActionResult> GetById(int id, [FromQuery] int? userId) // Thêm userId tùy chọn từ query
         {
