@@ -89,7 +89,7 @@ namespace DocumentSharingAPI.Controllers
             foreach (var d in documents)
             {
                 var user = await _userRepository.GetByIdAsync(d.UploadedBy);
-                
+
                 // Lấy số lượt tải duy nhất từ dictionary đã tạo
                 int uniqueDownloads = uniqueDownloadCounts.GetValueOrDefault(d.DocumentId, 0);
 
@@ -116,19 +116,124 @@ namespace DocumentSharingAPI.Controllers
             return Ok(result);
         }
 
+        [HttpGet("admin/list")]
+        public async Task<IActionResult> GetDocumentsForAdmin(
+    [FromQuery] int page = 1,
+    [FromQuery] int pageSize = 15,
+    [FromQuery] string keyword = "",
+    [FromQuery] int? categoryId = null,
+    [FromQuery] string? status = null,
+    [FromQuery] bool? isLocked = null,
+    [FromQuery] string? sortBy = "newest")
+        {
+            try
+            {
+                // 1. Khởi tạo Query (Lazy Evaluation)
+                var query = _context.Documents.AsNoTracking().AsQueryable();
+
+                // 2. Áp dụng bộ lọc
+                if (!string.IsNullOrEmpty(keyword))
+                    query = query.Where(d => d.Title.Contains(keyword)); // EF Core tự xử lý SQL LIKE
+
+                if (categoryId.HasValue && categoryId.Value > 0)
+                    query = query.Where(d => d.CategoryId == categoryId.Value);
+
+                if (!string.IsNullOrEmpty(status))
+                    query = query.Where(d => d.ApprovalStatus == status);
+
+                if (isLocked.HasValue)
+                    query = query.Where(d => d.IsLock == isLocked.Value);
+
+                // 3. Đếm tổng số (Query 1: Rất nhanh vì chỉ count index)
+                var total = await query.CountAsync();
+
+                // 4. Sắp xếp
+                // Lưu ý: Sắp xếp dựa trên cột có sẵn trong bảng để tối ưu tốc độ
+                switch (sortBy?.ToLower())
+                {
+                    case "downloads_desc":
+                        query = query.OrderByDescending(d => d.DownloadCount).ThenByDescending(d => d.DocumentId);
+                        break;
+                    case "downloads_asc":
+                        query = query.OrderBy(d => d.DownloadCount).ThenBy(d => d.DocumentId);
+                        break;
+                    case "oldest":
+                        query = query.OrderBy(d => d.UploadedAt).ThenBy(d => d.DocumentId);
+                        break;
+                    default: // newest
+                        query = query.OrderByDescending(d => d.UploadedAt).ThenByDescending(d => d.DocumentId);
+                        break;
+                }
+
+                // 5. Phân trang & Projection (Query 2: Lấy dữ liệu)
+                var data = await query
+                    .Skip((page - 1) * pageSize)
+                    .Take(pageSize)
+                    .Select(d => new
+                    {
+                        d.DocumentId,
+                        d.Title,
+                        d.Description, // Nếu description quá dài, cân nhắc chỉ lấy Substring ở đây
+                        d.CoverImageUrl,
+                        d.UploadedAt,
+                        d.DownloadCount, // Hiển thị tổng lượt click tải
+                        d.FileType,
+                        d.IsVipOnly,
+                        ApprovalStatus = d.ApprovalStatus,
+                        ReportCount = d.ReportCount,
+                        d.IsLock,
+                        d.UploadedBy,
+
+                        // Fix Null Safety cho User
+                        Email = d.User != null ? d.User.Email : "Unknown",
+
+                        // Lấy Tags: EF Core sẽ tự động chuyển thành LEFT JOIN hoặc Subquery tối ưu
+                        Tags = d.DocumentTags.Select(dt => new
+                        {
+                            TagId = dt.Tag.TagId,
+                            Name = dt.Tag.Name
+                        }).ToList(),
+
+                        // Tính toán Unique Download: Logic này chạy hoàn toàn dưới SQL
+                        UniqueDownloadCount = _context.UserDocuments
+                            .Where(ud => ud.DocumentId == d.DocumentId
+                                         && ud.ActionType == "Download"
+                                         && ud.UserId != d.UploadedBy)
+                            .Select(ud => ud.UserId)
+                            .Distinct()
+                            .Count()
+                    })
+                    .ToListAsync();
+
+                // 6. Trả về kết quả
+                return Ok(new
+                {
+                    data,
+                    total,
+                    page,
+                    totalPages = (int)Math.Ceiling((double)total / pageSize)
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error getting admin documents: {ex.ToString()}"); // Log full stack trace
+                return StatusCode(500, new { message = "Lỗi máy chủ khi tải danh sách tài liệu." });
+            }
+        }
         [HttpGet("{id:int}")]
         public async Task<IActionResult> GetById(int id, [FromQuery] int? userId) // Thêm userId tùy chọn từ query
         {
             var document = await _documentRepository.GetByIdAsync(id);
 
-            // --- LOGIC KIỂM TRA MỚI ---
-            if (document == null || document.IsLock || document.ApprovalStatus == "Suspended")
+            var requestingUser = userId.HasValue ? await _userRepository.GetByIdAsync(userId.Value) : null;
+            bool isAdmin = requestingUser != null && requestingUser.IsAdmin;
+            bool isOwner = requestingUser != null && document != null && document.UploadedBy == requestingUser.UserId;
+            if ((document == null || document.IsLock || document.ApprovalStatus == "Suspended") && !isAdmin && !isOwner)
             {
                 // Nếu không tìm thấy, hoặc tài liệu bị khóa/tạm ngưng, trả về NotFound.
                 Console.WriteLine($"Access denied or not found for Document ID {id}. Status: {document?.ApprovalStatus}, IsLocked: {document?.IsLock}");
                 return NotFound("Tài liệu không tồn tại hoặc đã bị tạm ngưng.");
             }
-            // --- KẾT THÚC LOGIC MỚI ---
 
             var user = await _userRepository.GetByIdAsync(document.UploadedBy);
 
@@ -234,6 +339,12 @@ namespace DocumentSharingAPI.Controllers
             {
                 Console.WriteLine($"Document title already exists: {model.Title}");
                 return BadRequest("Tiêu đề tài liệu đã tồn tại.");
+            }
+
+            if (document.IsLock)
+            {
+                // Trả về lỗi kèm message cụ thể để Frontend hiển thị toast
+                return BadRequest(new { message = "Tài liệu này đang bị khóa do vi phạm quy định. Bạn không thể cập nhật nội dung." });
             }
 
             document.Title = model.Title ?? document.Title;
@@ -678,7 +789,7 @@ namespace DocumentSharingAPI.Controllers
                 }
 
                 await _documentRepository.ApproveDocumentAsync(id);
-                
+
                 // Tự động reset report count khi duyệt tài liệu
                 document.ReportCount = 0;
                 await _documentRepository.UpdateAsync(document);
@@ -1052,7 +1163,7 @@ namespace DocumentSharingAPI.Controllers
                 {
                     // === HÀNH ĐỘNG MỞ KHÓA ===
                     // Admin đã kiểm tra và cho phép mở khóa = tài liệu đã được duyệt
-                    document.ApprovalStatus = "Approved";
+                    document.ApprovalStatus = "SemiApproved";
                     document.IsLock = false;
                     document.ReportCount = 0; // Reset report count khi mở khóa
 
@@ -1067,7 +1178,7 @@ namespace DocumentSharingAPI.Controllers
                         report.Status = "Rejected";
                     }
                 }
-                
+
                 _context.Documents.Update(document);
 
                 // Tạo thông báo... (giữ nguyên logic cũ)
@@ -1082,7 +1193,7 @@ namespace DocumentSharingAPI.Controllers
                     IsRead = false
                 };
                 await _notificationRepository.AddForTransactionAsync(notification);
-                
+
                 await _context.SaveChangesAsync();
                 await transaction.CommitAsync();
 
@@ -1148,7 +1259,7 @@ namespace DocumentSharingAPI.Controllers
 
                 // Kiểm tra trong bảng UserDocuments xem có record Download không
                 var userDocument = await _userDocumentRepository.GetByUserIdDocumentIdAndActionAsync(userId, id, "Download");
-                
+
                 return Ok(new { hasDownloaded = userDocument != null, isOwner = false });
             }
             catch (Exception ex)
@@ -1185,7 +1296,7 @@ namespace DocumentSharingAPI.Controllers
                 // 2. Cập nhật tài liệu: MỞ KHÓA và KHÔI PHỤC TRẠNG THÁI
                 document.ReportCount = 0;
                 document.IsLock = false; // <--- QUAN TRỌNG: Phải mở khóa
-                
+
                 // Admin đã kiểm tra và reset reports = tài liệu đã được duyệt
                 // Không cần phải quay về SemiApproved nữa
                 if (document.ApprovalStatus == "Suspended" || document.ApprovalStatus == "Pending")

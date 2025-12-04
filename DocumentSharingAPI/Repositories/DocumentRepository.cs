@@ -213,6 +213,63 @@ namespace DocumentSharingAPI.Repositories
             return (documents, total);
         }
 
+        public async Task<(IEnumerable<Document>, int)> GetAdminDocumentsAsync(int page, int pageSize, string keyword, int? categoryId, string? status, bool? isLocked, string? sortBy)
+        {
+            var query = _context.Documents
+                .Include(d => d.DocumentTags)
+                    .ThenInclude(dt => dt.Tag)
+                .AsQueryable();
+
+            // 1. Lọc theo từ khóa (Tên tài liệu)
+            if (!string.IsNullOrEmpty(keyword))
+            {
+                query = query.Where(d => d.Title.Contains(keyword));
+            }
+
+            // 2. Lọc theo Danh mục
+            if (categoryId.HasValue && categoryId.Value > 0)
+            {
+                query = query.Where(d => d.CategoryId == categoryId.Value);
+            }
+
+            // 3. Lọc theo Trạng thái (Approved, Pending, etc.)
+            if (!string.IsNullOrEmpty(status))
+            {
+                query = query.Where(d => d.ApprovalStatus == status);
+            }
+
+            // 4. Lọc theo Khóa/Mở khóa
+            if (isLocked.HasValue)
+            {
+                query = query.Where(d => d.IsLock == isLocked.Value);
+            }
+
+            // 5. Sắp xếp
+            switch (sortBy)
+            {
+                case "downloads_desc": // Lượt tải giảm dần
+                    query = query.OrderByDescending(d => d.DownloadCount).ThenByDescending(d => d.DocumentId);
+                    break;
+                case "downloads_asc": // Lượt tải tăng dần
+                    query = query.OrderBy(d => d.DownloadCount).ThenBy(d => d.DocumentId);
+                    break;
+                case "oldest": // Cũ nhất
+                    query = query.OrderBy(d => d.UploadedAt).ThenBy(d => d.DocumentId);
+                    break;
+                default: // "newest" mặc định
+                    query = query.OrderByDescending(d => d.UploadedAt).ThenByDescending(d => d.DocumentId);
+                    break;
+            }
+
+            int totalCount = await query.CountAsync();
+            var items = await query
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync();
+
+            return (items, totalCount);
+        }
+
         public async Task<int> GetTotalCountAsync(string keyword, int? categoryId, string fileType, bool isApproved = false)
         {
             var query = _context.Documents.AsQueryable();
@@ -273,39 +330,28 @@ namespace DocumentSharingAPI.Repositories
                 return new List<Document>();
             }
 
-            var normalizedTagNames = tagNames
-                .Select(tn => tn.Trim().ToLower())
-                .Where(tn => !string.IsNullOrWhiteSpace(tn))
-                .ToList();
+            var normalizedTags = tagNames.Select(t => t.Trim().ToLower()).ToList();
 
-            if (!normalizedTagNames.Any())
-            {
-                return new List<Document>();
-            }
-
-            var query = _context.Documents
-                .Include(d => d.User) 
+            // Logic này chạy hoàn toàn dưới SQL Server (tối ưu)
+            return await _context.Documents
+                .AsNoTracking() // Không theo dõi thay đổi để nhanh hơn
                 .Include(d => d.DocumentTags)
                     .ThenInclude(dt => dt.Tag)
-                .Where(d => d.DocumentId != excludeDocumentId && (d.ApprovalStatus == "Approved" || d.ApprovalStatus == "SemiApproved") && !d.IsLock)
-                .Where(d => d.DocumentTags.Any(dt => normalizedTagNames.Contains(dt.Tag.Name.ToLower())));
-
-            var documentsWithMatchCount = await query
+                .Where(d => d.DocumentId != excludeDocumentId
+                            && (d.ApprovalStatus == "Approved" || d.ApprovalStatus == "SemiApproved")
+                            && !d.IsLock)
+                .Where(d => d.DocumentTags.Any(dt => normalizedTags.Contains(dt.Tag.Name))) // Có ít nhất 1 tag trùng
                 .Select(d => new
                 {
                     Document = d,
-                    MatchCount = d.DocumentTags.Count(dt => normalizedTagNames.Contains(dt.Tag.Name.ToLower()))
+                    // Đếm số tag trùng ngay trong SQL
+                    MatchCount = d.DocumentTags.Count(dt => normalizedTags.Contains(dt.Tag.Name))
                 })
-                .ToListAsync(); 
-
-            var relatedDocuments = documentsWithMatchCount
-                .OrderByDescending(x => x.MatchCount)
-                .ThenByDescending(x => x.Document.DownloadCount) 
-                .Select(x => x.Document)
-                .Take(limit)
-                .ToList(); 
-
-            return relatedDocuments;
+                .OrderByDescending(x => x.MatchCount) // Sắp xếp ưu tiên trùng nhiều tag
+                .ThenByDescending(x => x.Document.DownloadCount) // Rồi tới lượt tải
+                .Take(limit) // Chỉ lấy đúng số lượng cần (ví dụ 5)
+                .Select(x => x.Document) // Chỉ lấy object Document
+                .ToListAsync();
         }
     }
 }
