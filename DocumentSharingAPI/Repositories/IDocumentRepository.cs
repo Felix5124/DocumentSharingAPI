@@ -14,5 +14,6 @@ namespace DocumentSharingAPI.Repositories
         Task<Document> GetTopDownloadedDocumentAsync();
         Task UpdateLockStatusAsync(int documentId, bool isLocked);
         Task<IEnumerable<Document>> GetRelatedDocumentsByTagsAsync(List<string> tagNames, int excludeDocumentId,int limit);
+        Task<(IEnumerable<Document>, int)> GetAdminDocumentsAsync(int page, int pageSize, string keyword, int? categoryId, string? status, bool? isLocked, string? sortBy);
     }
 }

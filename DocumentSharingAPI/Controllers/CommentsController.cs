@@ -63,8 +63,13 @@ namespace DocumentSharingAPI.Controllers
             if (document == null)
                 return BadRequest("Document not found.");
 
+            if (document.IsLock)
+            {
+                return BadRequest("Tài liệu này đang bị khóa, không thể bình luận.");
+            }
+
             // Lấy UserId từ body (do frontend gửi)
-            if ( model.UserId <= 0)
+            if (model.UserId <= 0)
                 return BadRequest("UserId is required.");
 
             var user = await _context.Users.FindAsync(model.UserId);

@@ -150,6 +150,22 @@ namespace DocumentSharingAPI.Models
                 .WithMany()
                 .HasForeignKey(r => r.ReporterUserId)
                 .OnDelete(DeleteBehavior.Restrict);
+
+            // --- INDEX MỚI ---
+
+            // 1. Tối ưu sắp xếp và lọc trong trang Admin (Status + Date)
+            modelBuilder.Entity<Document>()
+                .HasIndex(d => new { d.ApprovalStatus, d.UploadedAt });
+
+            // 2. Tối ưu tìm kiếm theo tên
+            modelBuilder.Entity<Document>()
+                .HasIndex(d => d.Title);
+
+            // 3. Tối ưu đếm lượt tải unique (DocumentStatusService)
+            modelBuilder.Entity<UserDocument>()
+                .HasIndex(ud => new { ud.DocumentId, ud.UserId, ud.ActionType });
+
+            // 4. Tối ưu tìm kiếm Tag (đã có unique index ở dòng 122, giữ nguyên)
         }
     }
 }
