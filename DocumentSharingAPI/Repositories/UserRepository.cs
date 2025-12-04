@@ -305,5 +305,53 @@ namespace DocumentSharingAPI.Repositories
             return user;
         }
 
+        public async Task<(IEnumerable<User>, int)> GetAdminUsersAsync(int page, int pageSize, string keyword, bool? isLocked, string? role)
+        {
+            var query = _context.Users.AsQueryable();
+
+            // 1. Lọc theo từ khóa (Họ tên hoặc Email)
+            if (!string.IsNullOrEmpty(keyword))
+            {
+                query = query.Where(u => u.FullName.Contains(keyword) || u.Email.Contains(keyword));
+            }
+
+            // 2. Lọc theo trạng thái Khóa
+            if (isLocked.HasValue)
+            {
+                query = query.Where(u => u.IsLocked == isLocked.Value);
+            }
+
+            // 3. Lọc theo Vai trò (Admin / VIP / User)
+            if (!string.IsNullOrEmpty(role))
+            {
+                switch (role.ToLower())
+                {
+                    case "admin":
+                        query = query.Where(u => u.IsAdmin == true);
+                        break;
+                    case "vip":
+                        query = query.Where(u => u.IsVip == true); // Giả sử logic VIP là IsVip = true
+                        break;
+                    case "regular": // Người dùng thường
+                        query = query.Where(u => u.IsAdmin == false && u.IsVip == false);
+                        break;
+                }
+            }
+
+            // Đếm tổng số bản ghi trước khi phân trang
+            int totalCount = await query.CountAsync();
+
+            // Sắp xếp mặc định (Mới nhất lên đầu hoặc theo ID)
+            query = query.OrderByDescending(u => u.CreatedAt).ThenBy(u => u.UserId);
+
+            // Phân trang
+            var items = await query
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync();
+
+            return (items, totalCount);
+        }
+
     }
 }

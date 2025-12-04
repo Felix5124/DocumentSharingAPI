@@ -107,7 +107,7 @@ namespace DocumentSharingAPI.Controllers
             {
                 // Xử lý race condition: nếu user vừa được tạo bởi request khác
                 Console.WriteLine($"Lỗi khi tạo user (có thể do race condition): {ex.Message}");
-                
+
                 // Thử lấy lại user đã tồn tại
                 var retryUser = await _userRepository.GetByFirebaseUidAsync(model.FirebaseUid);
                 if (retryUser != null)
@@ -115,7 +115,7 @@ namespace DocumentSharingAPI.Controllers
                     Console.WriteLine($"User được tạo bởi request song song, trả về user hiện có: {retryUser.UserId}");
                     return Ok(retryUser);
                 }
-                
+
                 return StatusCode(StatusCodes.Status500InternalServerError, "Lỗi khi tạo người dùng mới: " + ex.Message);
             }
         }
@@ -457,6 +457,51 @@ namespace DocumentSharingAPI.Controllers
             catch (Exception ex)
             {
                 return StatusCode(500, new { message = $"Internal server error: {ex.Message}" });
+            }
+        }
+
+
+
+        [HttpGet("admin/list")]
+        // [Authorize(Roles = "Admin")] // Uncomment nếu đã cấu hình Role chuẩn
+        public async Task<IActionResult> GetUsersForAdmin(
+    [FromQuery] int page = 1,
+    [FromQuery] int pageSize = 10,
+    [FromQuery] string keyword = "",
+    [FromQuery] bool? isLocked = null,
+    [FromQuery] string? role = null) // role: "admin", "vip", "regular"
+        {
+            try
+            {
+                var (users, total) = await _userRepository.GetAdminUsersAsync(page, pageSize, keyword, isLocked, role);
+
+                // Map sang DTO hoặc Anonymous object để trả về
+                var result = users.Select(u => new
+                {
+                    u.UserId,
+                    u.Email,
+                    u.FullName,
+                    AvatarUrl = _blob.GetReadSasUrl("avatars", NormalizeAvatar(u.AvatarUrl), TimeSpan.FromHours(1)),
+                    u.IsVip,
+                    u.VipExpiryDate,
+                    u.IsAdmin,
+                    u.IsLocked,
+                    u.CreatedAt,
+                    u.CommentCount
+                });
+
+                return Ok(new
+                {
+                    data = result,
+                    total,
+                    page,
+                    pageSize,
+                    totalPages = (int)Math.Ceiling((double)total / pageSize)
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Lỗi máy chủ: " + ex.Message });
             }
         }
     }
