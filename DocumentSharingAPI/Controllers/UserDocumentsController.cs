@@ -2,6 +2,7 @@
 using DocumentSharingAPI.Repositories;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using System.Threading.Tasks;
 
 namespace DocumentSharingAPI.Controllers
@@ -12,10 +13,12 @@ namespace DocumentSharingAPI.Controllers
     public class UserDocumentsController : ControllerBase
     {
         private readonly IUserDocumentRepository _userDocumentRepository;
+        private readonly ApplicationDbContext _context;
 
-        public UserDocumentsController(IUserDocumentRepository userDocumentRepository)
+        public UserDocumentsController(IUserDocumentRepository userDocumentRepository, ApplicationDbContext context)
         {
             _userDocumentRepository = userDocumentRepository;
+            _context = context;
         }
 
         [HttpGet("uploads")]
@@ -24,14 +27,44 @@ namespace DocumentSharingAPI.Controllers
             if (userId <= 0)
                 return BadRequest("Invalid user ID.");
 
-            var uploads = await _userDocumentRepository.GetByUserIdAndActionAsync(userId, "Upload");
-            return Ok(uploads.Select(ud => new
-            {
-                ud.DocumentId,
-                ud.Document.Title,
-                ud.AddedAt,
-                ud.Document.DownloadCount
-            }));
+            var uploads = await _context.Documents
+                .Where(d => d.UploadedBy == userId)
+                .Include(d => d.Category)
+                .Include(d => d.User)
+                .OrderByDescending(d => d.UploadedAt)
+                .Select(d => new
+                {
+                    d.DocumentId,
+                    d.Title,
+                    d.Description,
+                    d.FileUrl,
+                    d.FileType,
+                    d.FileSize,
+                    d.CoverImageUrl,
+                    d.DownloadCount,
+                    d.ApprovalStatus,
+                    d.IsVipOnly,
+                    d.IsLock,
+                    d.UploadedBy,
+                    d.UploadedAt,
+                    d.CategoryId,
+                    d.ReportCount,
+                    d.ApprovalPriority,
+                    Category = new
+                    {
+                        d.Category.CategoryId,
+                        CategoryName = d.Category.Name
+                    },
+                    Uploader = new
+                    {
+                        d.User.UserId,
+                        d.User.FullName,
+                        d.User.AvatarUrl
+                    }
+                })
+                .ToListAsync();
+
+            return Ok(uploads);
         }
 
         [HttpGet("downloads")]
@@ -40,13 +73,48 @@ namespace DocumentSharingAPI.Controllers
             if (userId <= 0)
                 return BadRequest("Invalid user ID.");
 
-            var downloads = await _userDocumentRepository.GetByUserIdAndActionAsync(userId, "Download");
-            return Ok(downloads.Select(ud => new
-            {
-                ud.DocumentId,
-                ud.Document.Title,
-                ud.AddedAt
-            }));
+            var downloads = await _context.UserDocuments
+                .Where(ud => ud.UserId == userId && ud.ActionType == "Download")
+                .Include(ud => ud.Document)
+                    .ThenInclude(d => d.Category)
+                .Include(ud => ud.Document)
+                    .ThenInclude(d => d.User)
+                .OrderByDescending(ud => ud.AddedAt)
+                .Select(ud => new
+                {
+                    ud.Document.DocumentId,
+                    ud.Document.Title,
+                    ud.Document.Description,
+                    ud.Document.FileUrl,
+                    ud.Document.FileType,
+                    ud.Document.FileSize,
+                    ud.Document.CoverImageUrl,
+                    ud.Document.DownloadCount,
+                    ud.Document.ApprovalStatus,
+                    ud.Document.IsVipOnly,
+                    ud.Document.IsLock,
+                    ud.Document.UploadedBy,
+                    ud.Document.UploadedAt,
+                    ud.Document.CategoryId,
+                    ud.Document.ReportCount,
+                    ud.Document.ApprovalPriority,
+                    DownloadedAt = ud.AddedAt,
+                    AddedAt = ud.AddedAt, // For backward compatibility with web
+                    Category = new
+                    {
+                        ud.Document.Category.CategoryId,
+                        CategoryName = ud.Document.Category.Name
+                    },
+                    Uploader = new
+                    {
+                        ud.Document.User.UserId,
+                        ud.Document.User.FullName,
+                        ud.Document.User.AvatarUrl
+                    }
+                })
+                .ToListAsync();
+
+            return Ok(downloads);
         }
 
         [HttpGet("library")]
