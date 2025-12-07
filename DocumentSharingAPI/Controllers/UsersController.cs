@@ -2,6 +2,7 @@
 using DocumentSharingAPI.Repositories;
 using FirebaseAdmin.Auth;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using System.Threading.Tasks;
 
 namespace DocumentSharingAPI.Controllers
@@ -459,17 +460,14 @@ namespace DocumentSharingAPI.Controllers
                 return StatusCode(500, new { message = $"Internal server error: {ex.Message}" });
             }
         }
-
-
-
         [HttpGet("admin/list")]
         // [Authorize(Roles = "Admin")] // Uncomment nếu đã cấu hình Role chuẩn
         public async Task<IActionResult> GetUsersForAdmin(
-    [FromQuery] int page = 1,
-    [FromQuery] int pageSize = 10,
-    [FromQuery] string keyword = "",
-    [FromQuery] bool? isLocked = null,
-    [FromQuery] string? role = null) // role: "admin", "vip", "regular"
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 10,
+        [FromQuery] string keyword = "",
+        [FromQuery] bool? isLocked = null,
+        [FromQuery] string? role = null) // role: "admin", "vip", "regular"
         {
             try
             {
@@ -502,6 +500,64 @@ namespace DocumentSharingAPI.Controllers
             catch (Exception ex)
             {
                 return StatusCode(500, new { message = "Lỗi máy chủ: " + ex.Message });
+            }
+        }
+
+        // Lấy danh sách tài liệu mà user đã tải về
+        [HttpGet("{id}/downloaded-documents")]
+        public async Task<IActionResult> GetDownloadedDocuments(int id)
+        {
+            try
+            {
+                var user = await _userRepository.GetByIdAsync(id);
+                if (user == null)
+                    return NotFound(new { message = "Người dùng không tồn tại." });
+
+                var downloadedDocuments = await _context.UserDocuments
+                    .Where(ud => ud.UserId == id && ud.ActionType == "Download")
+                    .Include(ud => ud.Document)
+                        .ThenInclude(d => d.Category)
+                    .Include(ud => ud.Document)
+                        .ThenInclude(d => d.User)
+                    .OrderByDescending(ud => ud.AddedAt)
+                    .Select(ud => new
+                    {
+                        ud.Document.DocumentId,
+                        ud.Document.Title,
+                        ud.Document.Description,
+                        ud.Document.FileUrl,
+                        ud.Document.FileType,
+                        ud.Document.FileSize,
+                        ud.Document.CoverImageUrl,
+                        ud.Document.DownloadCount,
+                        ud.Document.ApprovalStatus,
+                        ud.Document.IsVipOnly,
+                        ud.Document.IsLock,
+                        ud.Document.UploadedBy,
+                        ud.Document.UploadedAt,
+                        ud.Document.CategoryId,
+                        ud.Document.ReportCount,
+                        ud.Document.ApprovalPriority,
+                        DownloadedAt = ud.AddedAt,
+                        Category = new
+                        {
+                            ud.Document.Category.CategoryId,
+                            CategoryName = ud.Document.Category.Name
+                        },
+                        Uploader = new
+                        {
+                            ud.Document.User.UserId,
+                            ud.Document.User.FullName,
+                            ud.Document.User.AvatarUrl
+                        }
+                    })
+                    .ToListAsync();
+
+                return Ok(downloadedDocuments);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = $"Error: {ex.Message}" });
             }
         }
     }
