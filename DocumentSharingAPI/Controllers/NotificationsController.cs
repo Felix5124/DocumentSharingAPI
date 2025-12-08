@@ -110,6 +110,23 @@ namespace DocumentSharingAPI.Controllers
             }
         }
 
+        [HttpPut("mark-all-read")]
+        public async Task<IActionResult> MarkAllAsRead([FromQuery] int userId)
+        {
+            if (userId <= 0)
+                return BadRequest("Invalid user ID.");
+
+            try
+            {
+                await _notificationRepository.MarkAllAsReadAsync(userId);
+                return Ok(new { Message = "All notifications marked as read" });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Internal server error: {ex.Message}");
+            }
+        }
+
         [HttpDelete("{notificationId}")]
         public async Task<IActionResult> DeleteNotification(int notificationId)
         {
