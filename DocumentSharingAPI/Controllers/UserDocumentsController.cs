@@ -13,9 +13,9 @@ namespace DocumentSharingAPI.Controllers
     public class UserDocumentsController : ControllerBase
     {
         private readonly IUserDocumentRepository _userDocumentRepository;
-        private readonly ApplicationDbContext _context;
+        private readonly AppDbContext _context;
 
-        public UserDocumentsController(IUserDocumentRepository userDocumentRepository, ApplicationDbContext context)
+        public UserDocumentsController(IUserDocumentRepository userDocumentRepository, AppDbContext context)
         {
             _userDocumentRepository = userDocumentRepository;
             _context = context;

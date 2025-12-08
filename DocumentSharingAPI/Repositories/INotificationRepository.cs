@@ -8,6 +8,7 @@ namespace DocumentSharingAPI.Repositories
     {
         Task<IEnumerable<Notification>> GetByUserIdAsync(int userId);
         Task MarkAsReadAsync(int notificationId);
+        Task MarkAllAsReadAsync(int userId);
         new Task DeleteAsync(int notificationId); // Thêm từ khóa new
         Task<int> CountByUserIdAsync(int userId);
         Task DeleteOldestByUserIdAsync(int userId, int countToDelete);

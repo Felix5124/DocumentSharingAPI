@@ -45,6 +45,27 @@ namespace DocumentSharingAPI.Repositories
             }
         }
 
+        public async Task MarkAllAsReadAsync(int userId)
+        {
+            try
+            {
+                var notifications = await _context.Notifications
+                    .Where(n => n.UserId == userId && !n.IsRead)
+                    .ToListAsync();
+
+                foreach (var notification in notifications)
+                {
+                    notification.IsRead = true;
+                }
+
+                await _context.SaveChangesAsync();
+            }
+            catch (Exception ex)
+            {
+                throw new Exception($"Error marking all notifications as read for user {userId}: {ex.Message}", ex);
+            }
+        }
+
         public new async Task DeleteAsync(int notificationId) // Thêm từ khóa new
         {
             try
