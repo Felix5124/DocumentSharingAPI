@@ -29,14 +29,14 @@ namespace DocumentSharingAPI.Services
 
         /// <summary>
         /// Tạo mã đơn hàng unique
-        /// Format: VIP + YYYYMMDD + 6 số random
-        /// VD: VIP20250115123456
+        /// Format: PRE + YYYYMMDD + 6 số random
+        /// VD: PRE20250115123456
         /// </summary>
         public string GenerateOrderCode()
         {
             var datePrefix = DateTime.Now.ToString("yyyyMMdd");
             var randomSuffix = new Random().Next(100000, 999999);
-            return $"VIP{datePrefix}{randomSuffix}";
+            return $"PRE{datePrefix}{randomSuffix}";
         }
 
         /// <summary>

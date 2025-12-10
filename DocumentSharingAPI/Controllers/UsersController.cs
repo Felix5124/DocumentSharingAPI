@@ -214,7 +214,12 @@ namespace DocumentSharingAPI.Controllers
                 user.IsLocked,
                 user.IsEmailVerified,
                 user.CreatedAt,
-                user.CommentCount
+                user.CommentCount,
+                user.VipDownloadsUsedToday,
+                user.RegularDownloadsUsedToday,
+                user.VipBonusDownloads,
+                user.RegularBonusDownloads,
+                user.LastDownloadResetDate
             });
         }
 
@@ -239,7 +244,12 @@ namespace DocumentSharingAPI.Controllers
                 user.IsLocked,
                 user.IsEmailVerified,
                 user.CreatedAt,
-                user.CommentCount
+                user.CommentCount,
+                user.VipDownloadsUsedToday,
+                user.RegularDownloadsUsedToday,
+                user.VipBonusDownloads,
+                user.RegularBonusDownloads,
+                user.LastDownloadResetDate
             });
         }
 
