@@ -129,7 +129,7 @@ namespace DocumentSharingAPI.Services
             // === LOGIC DUYỆT DỰA TRÊN PHẦN TRĂM (%) ===
             
             // Điều kiện tiên quyết: Phải có ít nhất 40 lượt tải để dữ liệu đáng tin cậy.
-            if (uniqueDownloads >= 20)
+            if (uniqueDownloads >= 2)
             {
                 double reportRatio = (double)reports / uniqueDownloads;
 
@@ -144,13 +144,19 @@ namespace DocumentSharingAPI.Services
             if (shouldBeApproved)
             {
                 document.ApprovalStatus = "Approved";
+                document.ReportCount = 0; // Reset report count khi tự động duyệt
                 await _documentRepository.UpdateAsync(document);
 
-                // Gửi thông báo chúc mừng
+                // Tặng bonus download cho người upload (VIP bonus nếu tài liệu là VIP, thường nếu tài liệu thường)
+                bool isVipBonus = document.IsVipOnly;
+                await _userRepository.AddBonusDownloadAsync(document.UploadedBy, isVipBonus);
+
+                // Gửi thông báo chúc mừng với thông tin bonus
+                string bonusType = isVipBonus ? "Premium" : "thường";
                 var notification = new Notification
                 {
                     UserId = document.UploadedBy,
-                    Message = $"Chúc mừng! Tài liệu '{document.Title}' đã đạt độ tin cậy cao ({uniqueDownloads} lượt tải, tỷ lệ báo cáo thấp) và chính thức được Duyệt.",
+                    Message = $"Chúc mừng! Tài liệu '{document.Title}' đã đạt độ tin cậy cao ({uniqueDownloads} lượt tải, tỷ lệ báo cáo thấp) và chính thức được Duyệt. Bạn đã nhận được 1 lượt tải {bonusType} bonus!",
                     DocumentId = document.DocumentId,
                     SentAt = DateTime.Now,
                     IsRead = false

@@ -65,7 +65,7 @@ namespace DocumentSharingAPI.Controllers
             var orderCode = _vietQRService.GenerateOrderCode();
 
             // Tạo nội dung chuyển khoản
-            var transferContent = $"VIPPAY {orderCode}";
+            var transferContent = $"PREPAY {orderCode}";
 
             // Tạo QR code URL
             var qrCodeUrl = _vietQRService.GenerateVietQRUrl(
