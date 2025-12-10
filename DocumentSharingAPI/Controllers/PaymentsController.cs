@@ -2,6 +2,7 @@ using DocumentSharingAPI.Models;
 using DocumentSharingAPI.Models.DTO;
 using DocumentSharingAPI.Repositories;
 using DocumentSharingAPI.Services;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace DocumentSharingAPI.Controllers
@@ -296,7 +297,7 @@ namespace DocumentSharingAPI.Controllers
                 "yearly" => "12 tháng",
                 _ => payment.SubscriptionType
             };
-            
+
             var notification = new Notification
             {
                 UserId = user.UserId,
@@ -380,6 +381,72 @@ namespace DocumentSharingAPI.Controllers
         }
 
         /// <summary>
+        /// Admin: Lấy danh sách thanh toán với bộ lọc và phân trang
+        /// </summary>
+        [HttpGet("admin/list")]
+        [Authorize]
+        public async Task<IActionResult> GetPaymentsForAdmin(
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 10,
+            [FromQuery] string keyword = "",
+            [FromQuery] string status = "", // Mặc định là tất cả
+            [FromQuery] DateTime? fromDate = null,
+            [FromQuery] DateTime? toDate = null)
+        {
+            try
+            {
+                var firebaseUid = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+
+                if (string.IsNullOrEmpty(firebaseUid))
+                {
+                    return Unauthorized(new { message = "User not authenticated properly." });
+                }
+
+                var currentUser = await _userRepository.GetByFirebaseUidAsync(firebaseUid);
+
+                if (currentUser == null || !currentUser.IsAdmin)
+                {
+                    return StatusCode(403, new { message = "Access denied. You do not have permission to access this resource." });
+                }
+                var (payments, totalCount) = await _paymentRepository.GetAdminPaymentsAsync(page, pageSize, keyword, status, fromDate, toDate);
+
+                var response = payments.Select(p => new PaymentResponseDto
+                {
+                    PaymentId = p.PaymentId,
+                    OrderCode = p.OrderCode,
+                    UserId = p.UserId,
+                    UserFullName = p.User?.FullName ?? "Unknown",
+                    UserEmail = p.User?.Email ?? "Unknown",
+                    SubscriptionType = p.SubscriptionType,
+                    Amount = p.Amount,
+                    Status = p.Status,
+                    TransferContent = p.TransferContent ?? "",
+                    BankAccountNumber = p.BankAccountNumber ?? "",
+                    BankName = p.BankName ?? "",
+                    AccountHolderName = p.AccountHolderName ?? "",
+                    QRCodeUrl = p.QRCodeUrl,
+                    CreatedAt = p.CreatedAt,
+                    CompletedAt = p.CompletedAt,
+                    ExpiredAt = p.ExpiredAt,
+                    Note = p.Note
+                }).ToList();
+
+                return Ok(new
+                {
+                    data = response,
+                    total = totalCount,
+                    page,
+                    pageSize,
+                    totalPages = (int)Math.Ceiling((double)totalCount / pageSize)
+                });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = "Lỗi server: " + ex.Message });
+            }
+        }
+
+        /// <summary>
         /// Admin: Lấy tất cả đơn hàng (có phân trang)
         /// </summary>
         [HttpGet("all")]
@@ -387,7 +454,7 @@ namespace DocumentSharingAPI.Controllers
         {
             var allPayments = await _paymentRepository.GetAllAsync();
             var totalCount = allPayments.Count();
-            
+
             var payments = allPayments
                 .OrderByDescending(p => p.CreatedAt)
                 .Skip((page - 1) * pageSize)
