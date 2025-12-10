@@ -191,6 +191,7 @@ builder.Services.AddScoped<IFileValidationService, FileValidationService>();
 // THÊM DÒNG NÀY VÀO
 builder.Services.AddScoped<IDocumentStatusService, DocumentStatusService>();
 builder.Services.AddScoped<IVietQRService, VietQRService>();
+builder.Services.AddScoped<IEmailService, SendGridEmailService>(); // Sử dụng SendGrid
 
 
 

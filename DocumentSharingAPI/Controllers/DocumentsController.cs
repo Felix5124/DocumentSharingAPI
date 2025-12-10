@@ -663,11 +663,6 @@ namespace DocumentSharingAPI.Controllers
             };
             await _userDocumentRepository.AddAsync(userDocument);
 
-
-            // Thưởng cho mọi tài khoản: 1 lượt tải bonus khi upload tài liệu được duyệt
-            // Cho phép người dùng chọn loại bonus download (VIP hoặc thường)
-            await _userRepository.AddBonusDownloadAsync(model.UploadedBy, model.PreferVipBonus);
-
             var uploadCount = await _context.Documents.CountAsync(d => d.UploadedBy == model.UploadedBy);
             if (uploadCount >= 5)
             {
@@ -794,11 +789,16 @@ namespace DocumentSharingAPI.Controllers
                 document.ReportCount = 0;
                 await _documentRepository.UpdateAsync(document);
 
+                // Tặng bonus download cho người upload (VIP bonus nếu tài liệu là VIP, thường nếu tài liệu thường)
+                bool isVipBonus = document.IsVipOnly;
+                await _userRepository.AddBonusDownloadAsync(document.UploadedBy, isVipBonus);
+
                 // Gửi thông báo cho người đăng tài liệu
+                string bonusType = isVipBonus ? "Premium" : "thường";
                 var uploaderNotification = new Notification
                 {
                     UserId = document.UploadedBy,
-                    Message = $"Tài liệu '{document.Title}' của bạn đã được duyệt.",
+                    Message = $"Tài liệu '{document.Title}' của bạn đã được duyệt. Bạn đã nhận được 1 lượt tải {bonusType} bonus!",
                     DocumentId = document.DocumentId,
                     SentAt = DateTime.Now,
                     IsRead = false

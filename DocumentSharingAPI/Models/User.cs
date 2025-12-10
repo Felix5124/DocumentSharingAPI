@@ -15,6 +15,9 @@ namespace DocumentSharingAPI.Models
         public string? AvatarUrl { get; set; }
         public bool IsAdmin { get; set; } = false;
         public bool IsLocked { get; set; } = false;
+        public bool IsEmailVerified { get; set; } = false;
+        public string? EmailVerificationToken { get; set; }
+        public DateTime? EmailVerificationTokenExpiry { get; set; }
         public DateTime CreatedAt { get; set; } = DateTime.Now;
         public int CommentCount { get; set; }
 

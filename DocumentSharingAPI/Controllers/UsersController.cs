@@ -1,5 +1,6 @@
 ﻿using DocumentSharingAPI.Models;
 using DocumentSharingAPI.Repositories;
+using DocumentSharingAPI.Services;
 using FirebaseAdmin.Auth;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -14,12 +15,16 @@ namespace DocumentSharingAPI.Controllers
         private readonly IUserRepository _userRepository;
         private readonly AppDbContext _context;
         private readonly IBlobService _blob;
+        private readonly IEmailService _emailService;
+        private readonly IConfiguration _configuration;
 
-        public UsersController(IUserRepository userRepository, AppDbContext context, IBlobService blob)
+        public UsersController(IUserRepository userRepository, AppDbContext context, IBlobService blob, IEmailService emailService, IConfiguration configuration)
         {
             _userRepository = userRepository;
             _context = context;
             _blob = blob;
+            _emailService = emailService;
+            _configuration = configuration;
         }
 
         // Helper: chuẩn hóa tên file avatar (bỏ prefix “avatars/” nếu có)
@@ -48,18 +53,39 @@ namespace DocumentSharingAPI.Controllers
             };
             var firebaseUser = await FirebaseAuth.DefaultInstance.CreateUserAsync(userArgs);
 
+            // Tạo token xác thực email
+            var verificationToken = Guid.NewGuid().ToString();
+            var tokenExpiry = DateTime.UtcNow.AddHours(24);
+
             var user = new User
             {
                 Email = model.Email,
                 FullName = model.FullName,
                 FirebaseUid = firebaseUser.Uid,
                 AvatarUrl = "default-avatar.png",
-                CreatedAt = DateTime.Now
+                CreatedAt = DateTime.Now,
+                EmailVerificationToken = verificationToken,
+                EmailVerificationTokenExpiry = tokenExpiry,
+                IsEmailVerified = false
             };
             await _userRepository.AddAsync(user);
 
-            var verificationLink = await FirebaseAuth.DefaultInstance.GenerateEmailVerificationLinkAsync(model.Email);
-            return Ok(new { Message = "User registered successfully. Please verify your email.", UserId = user.UserId });
+            // Tạo link xác thực
+            var frontendUrl = _configuration["FrontendUrl"] ?? "http://localhost:5173";
+            var verificationLink = $"{frontendUrl}/verify-email?token={verificationToken}&email={Uri.EscapeDataString(model.Email)}";
+
+            // Gửi email xác thực
+            try
+            {
+                await _emailService.SendVerificationEmailAsync(model.Email, verificationLink);
+            }
+            catch (Exception ex)
+            {
+                // Log lỗi nhưng vẫn cho phép đăng ký thành công
+                Console.WriteLine($"Failed to send verification email: {ex.Message}");
+            }
+
+            return Ok(new { Message = "User registered successfully. Please check your email to verify your account.", UserId = user.UserId });
         }
 
         [HttpPost("authprovider-register")]
@@ -186,8 +212,14 @@ namespace DocumentSharingAPI.Controllers
                 user.VipExpiryDate,
                 user.IsAdmin,
                 user.IsLocked,
+                user.IsEmailVerified,
                 user.CreatedAt,
-                user.CommentCount
+                user.CommentCount,
+                user.VipDownloadsUsedToday,
+                user.RegularDownloadsUsedToday,
+                user.VipBonusDownloads,
+                user.RegularBonusDownloads,
+                user.LastDownloadResetDate
             });
         }
 
@@ -210,8 +242,14 @@ namespace DocumentSharingAPI.Controllers
                 user.VipExpiryDate,
                 user.IsAdmin,
                 user.IsLocked,
+                user.IsEmailVerified,
                 user.CreatedAt,
-                user.CommentCount
+                user.CommentCount,
+                user.VipDownloadsUsedToday,
+                user.RegularDownloadsUsedToday,
+                user.VipBonusDownloads,
+                user.RegularBonusDownloads,
+                user.LastDownloadResetDate
             });
         }
 
@@ -503,6 +541,156 @@ namespace DocumentSharingAPI.Controllers
                 return StatusCode(500, new { message = "Lỗi máy chủ: " + ex.Message });
             }
         }
+
+        // API gửi lại email xác thực
+        [HttpPost("resend-verification-email")]
+        public async Task<IActionResult> ResendVerificationEmail([FromBody] ResendEmailModel model)
+        {
+            var user = await _userRepository.GetByEmailAsync(model.Email);
+            if (user == null)
+                return NotFound("Email không tồn tại trong hệ thống.");
+
+            if (user.IsEmailVerified)
+                return BadRequest("Email đã được xác thực.");
+
+            // Tạo token mới
+            var verificationToken = Guid.NewGuid().ToString();
+            var tokenExpiry = DateTime.UtcNow.AddHours(24);
+
+            user.EmailVerificationToken = verificationToken;
+            user.EmailVerificationTokenExpiry = tokenExpiry;
+
+            await _userRepository.UpdateAsync(user);
+
+            // Tạo link xác thực
+            var frontendUrl = _configuration["FrontendUrl"] ?? "http://localhost:5173";
+            var verificationLink = $"{frontendUrl}/verify-email?token={verificationToken}&email={Uri.EscapeDataString(model.Email)}";
+
+            // Gửi email xác thực
+            try
+            {
+                await _emailService.SendVerificationEmailAsync(model.Email, verificationLink);
+                return Ok(new { Message = "Email xác thực đã được gửi lại. Vui lòng kiểm tra hộp thư của bạn." });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to send verification email: {ex.Message}");
+                return StatusCode(500, "Không thể gửi email xác thực. Vui lòng thử lại sau.");
+            }
+        }
+
+        // API xác thực email bằng token
+        [HttpPost("verify-email")]
+        public async Task<IActionResult> VerifyEmail([FromBody] VerifyEmailModel model)
+        {
+            var user = await _userRepository.GetByEmailAsync(model.Email);
+            if (user == null)
+                return NotFound("Email không tồn tại trong hệ thống.");
+
+            if (user.IsEmailVerified)
+                return BadRequest("Email đã được xác thực trước đó.");
+
+            if (string.IsNullOrEmpty(user.EmailVerificationToken))
+                return BadRequest("Không tìm thấy token xác thực. Vui lòng yêu cầu gửi lại email xác thực.");
+
+            if (user.EmailVerificationToken != model.Token)
+                return BadRequest("Token xác thực không hợp lệ.");
+
+            if (user.EmailVerificationTokenExpiry == null || user.EmailVerificationTokenExpiry < DateTime.UtcNow)
+                return BadRequest("Token xác thực đã hết hạn. Vui lòng yêu cầu gửi lại email xác thực.");
+
+            // Xác thực thành công
+            user.IsEmailVerified = true;
+            user.EmailVerificationToken = null;
+            user.EmailVerificationTokenExpiry = null;
+
+            await _userRepository.UpdateAsync(user);
+
+            // Cập nhật emailVerified trong Firebase
+            try
+            {
+                if (!string.IsNullOrEmpty(user.FirebaseUid))
+                {
+                    var userRecordArgs = new UserRecordArgs
+                    {
+                        Uid = user.FirebaseUid,
+                        EmailVerified = true
+                    };
+                    await FirebaseAuth.DefaultInstance.UpdateUserAsync(userRecordArgs);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Lỗi khi cập nhật emailVerified trong Firebase: {ex.Message}");
+                // Không return error vì backend đã verify thành công
+            }
+
+            return Ok(new { Message = "Email đã được xác thực thành công!" });
+        }
+
+        // API kiểm tra trạng thái xác thực email
+        [HttpGet("check-email-verification/{email}")]
+        public async Task<IActionResult> CheckEmailVerification(string email)
+        {
+            var user = await _userRepository.GetByEmailAsync(email);
+            if (user == null)
+                return NotFound("Email không tồn tại trong hệ thống.");
+
+            return Ok(new { IsEmailVerified = user.IsEmailVerified });
+        }
+
+        // API admin: Sync Firebase emailVerified cho user đã verify backend
+        [HttpPost("admin/sync-firebase-email-verified/{email}")]
+        public async Task<IActionResult> SyncFirebaseEmailVerified(string email)
+        {
+            var user = await _userRepository.GetByEmailAsync(email);
+            if (user == null)
+                return NotFound("Email không tồn tại trong hệ thống.");
+
+            if (!user.IsEmailVerified)
+                return BadRequest("User chưa verify email trong backend.");
+
+            if (string.IsNullOrEmpty(user.FirebaseUid))
+                return BadRequest("User không có FirebaseUid.");
+
+            try
+            {
+                var userRecordArgs = new UserRecordArgs
+                {
+                    Uid = user.FirebaseUid,
+                    EmailVerified = true
+                };
+                await FirebaseAuth.DefaultInstance.UpdateUserAsync(userRecordArgs);
+                return Ok(new { Message = $"Đã sync emailVerified cho Firebase user {user.FirebaseUid}" });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { Message = $"Lỗi khi update Firebase: {ex.Message}" });
+            }
+        }
+
+        // API admin: Update IsEmailVerified cho các user cũ (chỉ dùng 1 lần)
+        [HttpPost("admin/verify-all-existing-users")]
+        public async Task<IActionResult> VerifyAllExistingUsers()
+        {
+            var allUsers = await _context.Users
+                .Where(u => !u.IsEmailVerified && u.CreatedAt < DateTime.Parse("2025-12-09"))
+                .ToListAsync();
+
+            foreach (var user in allUsers)
+            {
+                user.IsEmailVerified = true;
+                user.EmailVerificationToken = null;
+                user.EmailVerificationTokenExpiry = null;
+            }
+
+            await _context.SaveChangesAsync();
+
+            return Ok(new { 
+                Message = $"Đã update {allUsers.Count} users thành IsEmailVerified = true",
+                Count = allUsers.Count
+            });
+        }
     }
 
     // Models
@@ -540,5 +728,16 @@ namespace DocumentSharingAPI.Controllers
         public string FirebaseUid { get; set; } = string.Empty;
         public string Email { get; set; } = string.Empty;
         public string FullName { get; set; } = string.Empty;
+    }
+
+    public class ResendEmailModel
+    {
+        public string Email { get; set; } = string.Empty;
+    }
+
+    public class VerifyEmailModel
+    {
+        public string Email { get; set; } = string.Empty;
+        public string Token { get; set; } = string.Empty;
     }
 }
