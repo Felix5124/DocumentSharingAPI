@@ -87,8 +87,8 @@ namespace DocumentSharingAPI.Services
             bool isVipValid = user.IsVip && user.VipExpiryDate.HasValue && user.VipExpiryDate.Value > DateTime.Now;
 
             // Tính toán lượt tải còn lại
-            int dailyRegularLimit = isVipValid ? 10 : 2; // VIP: 10/ngày, Thường: 2/ngày
-            int dailyVipLimit = 10; // VIP quota riêng biệt
+            int dailyRegularLimit = isVipValid ? 8 : 2; // VIP: 8/ngày, Thường: 2/ngày
+            int dailyVipLimit = 5; // VIP quota riêng biệt: 5 lượt VIP/ngày
 
             int remainingRegularToday = Math.Max(dailyRegularLimit - user.RegularDownloadsUsedToday, 0);
             int remainingVipToday = Math.Max(dailyVipLimit - user.VipDownloadsUsedToday, 0);
@@ -127,8 +127,8 @@ KIẾN THỨC NGHIỆP VỤ (LOGIC HỆ THỐNG):
 
 1. **Quy định về Lượt Tải (Download Limit):**
    - **Tài khoản Thường (Free):** Được miễn phí **2 lượt tải tài liệu thường/ngày**.
-   - **Tài khoản VIP:** Được **10 lượt tải thường + 10 lượt tải VIP** mỗi ngày.
-   - **Cơ chế Reset:** Lượt tải hàng ngày sẽ được làm mới (reset) vào lúc **00:00 sáng ngày hôm sau**.
+   - **Tài khoản VIP:** Được **8 lượt tải thường + 5 lượt tải VIP** mỗi ngày.
+   - **Cơ chế Reset:** Lượt tải hàng ngày sẽ được làm mới (reset) vào lúc **00:00 sáng ngày hôm sau**. Lượt tải không sử dụng sẽ không cộng dồn sang ngày hôm sau.
    - **Đã hết lượt trong ngày?** Người dùng có thể:
      + Nâng cấp VIP để có nhiều lượt hơn.
      + Dùng 'Lượt tải thưởng' (Bonus) tích lũy được từ việc đóng góp tài liệu.

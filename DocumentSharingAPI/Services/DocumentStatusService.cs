@@ -66,7 +66,8 @@ namespace DocumentSharingAPI.Services
             {
                 // Logic cho tài liệu "ĐÃ DUYỆT": Nới lỏng hơn (để tránh bị spam report phá hoại)
                 // Điều kiện: tỷ lệ báo cáo >= 15%
-                if (reports >= 8 && reportRatio >= 0.20)
+                // if (reports >= 8 && reportRatio >= 0.20)
+                if (reports >= 2)
                 {
                     shouldChangeToPending = true;
                 }
