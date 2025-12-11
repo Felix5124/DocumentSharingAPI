@@ -117,6 +117,7 @@ namespace DocumentSharingAPI.Controllers
                     IsVip = false,
                     IsAdmin = false,
                     IsLocked = false,
+                    IsEmailVerified = true, // OAuth providers (Google/Facebook) have verified email
                     AvatarUrl = "default-avatar.png",
                     CreatedAt = DateTime.UtcNow
                 };
@@ -691,6 +692,221 @@ namespace DocumentSharingAPI.Controllers
                 Count = allUsers.Count
             });
         }
+
+        // API: Đổi mật khẩu
+        [HttpPost("change-password")]
+        public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordModel model)
+        {
+            if (string.IsNullOrEmpty(model.Email) || string.IsNullOrEmpty(model.CurrentPassword) || string.IsNullOrEmpty(model.NewPassword))
+            {
+                return BadRequest(new { message = "Email, mật khẩu hiện tại và mật khẩu mới không được để trống." });
+            }
+
+            // Kiểm tra độ dài mật khẩu mới
+            if (model.NewPassword.Length < 6)
+            {
+                return BadRequest(new { message = "Mật khẩu mới phải có ít nhất 6 ký tự." });
+            }
+
+            try
+            {
+                // Lấy user từ database
+                var user = await _userRepository.GetByEmailAsync(model.Email);
+                if (user == null)
+                {
+                    return NotFound(new { message = "Không tìm thấy người dùng." });
+                }
+
+                // Debug log
+                Console.WriteLine($"[ChangePassword] User found: {user.Email}");
+                Console.WriteLine($"[ChangePassword] User FirebaseUid: {user.FirebaseUid}");
+                Console.WriteLine($"[ChangePassword] Has FirebaseUid: {!string.IsNullOrEmpty(user.FirebaseUid)}");
+
+                // Kiểm tra nếu user không có FirebaseUid (không nên xảy ra)
+                if (string.IsNullOrEmpty(user.FirebaseUid))
+                {
+                    Console.WriteLine($"[ChangePassword] ERROR: User {user.Email} has no FirebaseUid!");
+                    return BadRequest(new { message = "Tài khoản không hợp lệ. Vui lòng liên hệ hỗ trợ." });
+                }
+
+                // Xác thực mật khẩu hiện tại với Firebase
+                try
+                {
+                    Console.WriteLine($"[ChangePassword] Getting Firebase user for UID: {user.FirebaseUid}");
+                    var authLink = await FirebaseAuth.DefaultInstance.GetUserAsync(user.FirebaseUid);
+                    Console.WriteLine($"[ChangePassword] Firebase user found. Providers: {string.Join(", ", authLink.ProviderData.Select(p => p.ProviderId))}");
+                    
+                    // Kiểm tra xem user có đăng ký bằng provider (Google/Facebook) không
+                    var hasPasswordProvider = authLink.ProviderData.Any(p => p.ProviderId == "password");
+                    Console.WriteLine($"[ChangePassword] Has password provider: {hasPasswordProvider}");
+                    
+                    if (!hasPasswordProvider)
+                    {
+                        Console.WriteLine($"[ChangePassword] User {user.Email} registered with OAuth provider, cannot change password");
+                        return BadRequest(new { message = "Tài khoản này đăng ký bằng Google/Facebook nên không có mật khẩu. Không thể đổi mật khẩu." });
+                    }
+
+                    // Thử đăng nhập với mật khẩu hiện tại để xác thực
+                    // Note: Firebase Admin SDK không có phương thức verify password trực tiếp
+                    // Nên ta cần dùng Firebase REST API
+                    Console.WriteLine($"[ChangePassword] Verifying current password for {model.Email}");
+                    var firebaseApiKey = _configuration["Firebase:ApiKey"];
+                    var verifyUrl = $"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={firebaseApiKey}";
+                    
+                    using var httpClient = new HttpClient();
+                    var verifyContent = new
+                    {
+                        email = model.Email,
+                        password = model.CurrentPassword,
+                        returnSecureToken = true
+                    };
+                    
+                    var verifyJson = System.Text.Json.JsonSerializer.Serialize(verifyContent);
+                    var verifyResponse = await httpClient.PostAsync(verifyUrl, new StringContent(verifyJson, System.Text.Encoding.UTF8, "application/json"));
+                    
+                    if (!verifyResponse.IsSuccessStatusCode)
+                    {
+                        var errorContent = await verifyResponse.Content.ReadAsStringAsync();
+                        Console.WriteLine($"[ChangePassword] Password verification failed: {errorContent}");
+                        return BadRequest(new { message = "Mật khẩu hiện tại không đúng." });
+                    }
+                    
+                    Console.WriteLine($"[ChangePassword] Current password verified successfully");
+
+                    // Đổi mật khẩu trong Firebase
+                    Console.WriteLine($"[ChangePassword] Updating password in Firebase for {user.Email}");
+                    var userRecordArgs = new UserRecordArgs
+                    {
+                        Uid = user.FirebaseUid,
+                        Password = model.NewPassword
+                    };
+
+                    await FirebaseAuth.DefaultInstance.UpdateUserAsync(userRecordArgs);
+                    Console.WriteLine($"[ChangePassword] Password updated successfully for {user.Email}");
+
+                    return Ok(new { message = "Đổi mật khẩu thành công." });
+                }
+                catch (FirebaseAuthException ex)
+                {
+                    Console.WriteLine($"[ChangePassword] FirebaseAuthException: {ex.Message}");
+                    return BadRequest(new { message = $"Lỗi Firebase: {ex.Message}" });
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ChangePassword] Unexpected error: {ex.Message}");
+                Console.WriteLine($"[ChangePassword] StackTrace: {ex.StackTrace}");
+                return StatusCode(500, new { message = $"Lỗi server: {ex.Message}" });
+            }
+        }
+
+        [HttpPost("forgot-password")]
+        public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordModel model)
+        {
+            if (string.IsNullOrWhiteSpace(model.Email))
+                return BadRequest(new { message = "Email không được để trống." });
+
+            try
+            {
+                var user = await _userRepository.GetByEmailAsync(model.Email);
+                if (user == null)
+                {
+                    // Không tiết lộ email có tồn tại hay không (security best practice)
+                    return Ok(new { message = "Nếu email tồn tại, chúng tôi đã gửi link đặt lại mật khẩu." });
+                }
+
+                // Chỉ user đăng ký bằng email/password mới được reset password
+                if (!string.IsNullOrEmpty(user.FirebaseUid))
+                {
+                    var firebaseUser = await FirebaseAuth.DefaultInstance.GetUserAsync(user.FirebaseUid);
+                    var hasPasswordProvider = firebaseUser.ProviderData.Any(p => p.ProviderId == "password");
+                    
+                    if (!hasPasswordProvider)
+                    {
+                        return BadRequest(new { message = "Tài khoản của bạn đăng nhập bằng Google/Facebook, không thể đặt lại mật khẩu." });
+                    }
+                }
+
+                // Generate reset token
+                var resetToken = Guid.NewGuid().ToString();
+                user.PasswordResetToken = resetToken;
+                user.PasswordResetTokenExpiry = DateTime.UtcNow.AddHours(1); // Token expires in 1 hour
+
+                await _userRepository.UpdateAsync(user);
+
+                // Create reset link
+                var frontendUrl = _configuration["Frontend:Url"] ?? "http://localhost:5173";
+                var resetLink = $"{frontendUrl}/reset-password?token={resetToken}&email={Uri.EscapeDataString(user.Email)}";
+
+                // Send email
+                await _emailService.SendPasswordResetEmailAsync(user.Email, resetLink);
+
+                Console.WriteLine($"[ForgotPassword] Reset email sent to {user.Email}, token expires at {user.PasswordResetTokenExpiry}");
+
+                return Ok(new { message = "Email đặt lại mật khẩu đã được gửi. Vui lòng kiểm tra hộp thư." });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ForgotPassword] Error: {ex.Message}");
+                return StatusCode(500, new { message = "Lỗi khi xử lý yêu cầu: " + ex.Message });
+            }
+        }
+
+        [HttpPost("reset-password")]
+        public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordModel model)
+        {
+            if (string.IsNullOrWhiteSpace(model.Email) || string.IsNullOrWhiteSpace(model.Token) || string.IsNullOrWhiteSpace(model.NewPassword))
+                return BadRequest(new { message = "Thông tin không hợp lệ." });
+
+            if (model.NewPassword.Length < 6)
+                return BadRequest(new { message = "Mật khẩu mới phải có ít nhất 6 ký tự." });
+
+            try
+            {
+                var user = await _userRepository.GetByEmailAsync(model.Email);
+                if (user == null)
+                    return BadRequest(new { message = "Token không hợp lệ hoặc đã hết hạn." });
+
+                // Verify token
+                if (user.PasswordResetToken != model.Token)
+                {
+                    Console.WriteLine($"[ResetPassword] Token mismatch for {model.Email}");
+                    return BadRequest(new { message = "Token không hợp lệ hoặc đã hết hạn." });
+                }
+
+                if (user.PasswordResetTokenExpiry == null || user.PasswordResetTokenExpiry < DateTime.UtcNow)
+                {
+                    Console.WriteLine($"[ResetPassword] Token expired for {model.Email}");
+                    return BadRequest(new { message = "Token đã hết hạn. Vui lòng yêu cầu đặt lại mật khẩu mới." });
+                }
+
+                // Update password in Firebase
+                if (string.IsNullOrEmpty(user.FirebaseUid))
+                    return BadRequest(new { message = "Không thể đặt lại mật khẩu cho tài khoản này." });
+
+                var userUpdate = new UserRecordArgs
+                {
+                    Uid = user.FirebaseUid,
+                    Password = model.NewPassword
+                };
+
+                await FirebaseAuth.DefaultInstance.UpdateUserAsync(userUpdate);
+
+                // Clear reset token
+                user.PasswordResetToken = null;
+                user.PasswordResetTokenExpiry = null;
+                await _userRepository.UpdateAsync(user);
+
+                Console.WriteLine($"[ResetPassword] Password reset successfully for {model.Email}");
+
+                return Ok(new { message = "Đặt lại mật khẩu thành công. Bạn có thể đăng nhập bằng mật khẩu mới." });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ResetPassword] Error: {ex.Message}");
+                return StatusCode(500, new { message = "Lỗi khi đặt lại mật khẩu: " + ex.Message });
+            }
+        }
     }
 
     // Models
@@ -739,5 +955,24 @@ namespace DocumentSharingAPI.Controllers
     {
         public string Email { get; set; } = string.Empty;
         public string Token { get; set; } = string.Empty;
+    }
+
+    public class ChangePasswordModel
+    {
+        public string Email { get; set; } = string.Empty;
+        public string CurrentPassword { get; set; } = string.Empty;
+        public string NewPassword { get; set; } = string.Empty;
+    }
+
+    public class ForgotPasswordModel
+    {
+        public string Email { get; set; } = string.Empty;
+    }
+
+    public class ResetPasswordModel
+    {
+        public string Email { get; set; } = string.Empty;
+        public string Token { get; set; } = string.Empty;
+        public string NewPassword { get; set; } = string.Empty;
     }
 }
