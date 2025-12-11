@@ -18,6 +18,8 @@ namespace DocumentSharingAPI.Models
         public bool IsEmailVerified { get; set; } = false;
         public string? EmailVerificationToken { get; set; }
         public DateTime? EmailVerificationTokenExpiry { get; set; }
+        public string? PasswordResetToken { get; set; }
+        public DateTime? PasswordResetTokenExpiry { get; set; }
         public DateTime CreatedAt { get; set; } = DateTime.Now;
         public int CommentCount { get; set; }
 

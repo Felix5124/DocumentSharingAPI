@@ -192,7 +192,7 @@ namespace DocumentSharingAPI.Repositories
                 if (isVipDownload)
                 {
                     // Tài liệu VIP: ưu tiên dùng quota VIP nếu là VIP user, nếu không thì dùng bonus
-                    if (user.IsVip && user.VipExpiryDate > DateTime.Now && user.VipDownloadsUsedToday < 10)
+                    if (user.IsVip && user.VipExpiryDate > DateTime.Now && user.VipDownloadsUsedToday < 5)
                     {
                         user.VipDownloadsUsedToday++;
                     }
@@ -204,7 +204,7 @@ namespace DocumentSharingAPI.Repositories
                 else
                 {
                     // Tài liệu thường: ưu tiên dùng quota thường, sau đó mới dùng bonus
-                    int dailyLimit = (user.IsVip && user.VipExpiryDate > DateTime.Now) ? 10 : 2;
+                    int dailyLimit = (user.IsVip && user.VipExpiryDate > DateTime.Now) ? 8 : 2;
                     
                     if (user.RegularDownloadsUsedToday < dailyLimit)
                     {
@@ -239,8 +239,8 @@ namespace DocumentSharingAPI.Repositories
                 // Tài liệu VIP chỉ VIP user hoặc có bonus downloads VIP mới tải được
                 if (user.IsVip && user.VipExpiryDate > DateTime.Now)
                 {
-                    // VIP: 10 lượt daily + bonus VIP
-                    return (user.VipDownloadsUsedToday < 10) || (user.VipBonusDownloads > 0);
+                    // VIP: 5 lượt VIP daily + bonus VIP
+                    return (user.VipDownloadsUsedToday < 5) || (user.VipBonusDownloads > 0);
                 }
                 else
                 {
@@ -252,8 +252,8 @@ namespace DocumentSharingAPI.Repositories
                 // Tài liệu thường
                 if (user.IsVip && user.VipExpiryDate > DateTime.Now)
                 {
-                    // VIP: 10 lượt daily + bonus thường
-                    return (user.RegularDownloadsUsedToday < 10) || (user.RegularBonusDownloads > 0);
+                    // VIP: 8 lượt thường daily + bonus thường
+                    return (user.RegularDownloadsUsedToday < 8) || (user.RegularBonusDownloads > 0);
                 }
                 else
                 {
