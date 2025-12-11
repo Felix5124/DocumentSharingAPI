@@ -919,7 +919,7 @@ namespace DocumentSharingAPI.Controllers
                     }
                     else
                     {
-                        return BadRequest(new { message = "Bạn đã hết lượt tải tài liệu thường hôm nay (2 lượt/ngày cho tài khoản thường). Vui lòng nâng cấp Premium để có 10 lượt/ngày hoặc upload tài liệu để nhận bonus download." });
+                        return BadRequest(new { message = "Bạn đã hết lượt tải tài liệu thường hôm nay (2 lượt/ngày cho tài khoản thường). Vui lòng nâng cấp Premium để có 8 lượt thường + 5 lượt VIP/ngày hoặc upload tài liệu để nhận bonus download." });
                     }
                 }
 
@@ -1145,11 +1145,11 @@ namespace DocumentSharingAPI.Controllers
                 if (model.IsLocked)
                 {
                     // === HÀNH ĐỘNG KHÓA (XÁC NHẬN VI PHẠM) ===
+                    // Mark as suspended and lock access
                     document.ApprovalStatus = "Suspended";
                     document.IsLock = true;
 
                     // Tự động đánh dấu các báo cáo đang chờ là "Đã giải quyết" (Resolved)
-                    // Vì admin đã khóa tài liệu, tức là đã xử lý xong các báo cáo này.
                     var pendingReports = await _context.Reports
                         .Where(r => r.DocumentId == id && r.Status == "Pending")
                         .ToListAsync();
@@ -1162,13 +1162,24 @@ namespace DocumentSharingAPI.Controllers
                 else
                 {
                     // === HÀNH ĐỘNG MỞ KHÓA ===
-                    // Admin đã kiểm tra và cho phép mở khóa = tài liệu đã được duyệt
-                    document.ApprovalStatus = "SemiApproved";
+                    // Nếu admin muốn phục hồi về Approved thì sẽ gửi flag RestoreToApproved = true
+                    // Ngược lại mặc định đặt về SemiApproved
+                    bool restoreToApproved = false;
+                    try { restoreToApproved = (model as dynamic).RestoreToApproved ?? false; } catch { restoreToApproved = false; }
+
+                    if (restoreToApproved)
+                    {
+                        document.ApprovalStatus = "Approved";
+                    }
+                    else
+                    {
+                        document.ApprovalStatus = "SemiApproved";
+                    }
+
                     document.IsLock = false;
                     document.ReportCount = 0; // Reset report count khi mở khóa
 
                     // Khi mở khóa thủ công, coi như các báo cáo trước đó (Resolved/Pending) là không còn hiệu lực hoặc đã tha thứ
-                    // Chuyển chúng sang Rejected (hoặc giữ Resolved tùy logic, ở đây chọn Rejected để clean lịch sử tiêu cực)
                     var reports = await _context.Reports
                         .Where(r => r.DocumentId == id && (r.Status == "Pending" || r.Status == "Resolved"))
                         .ToListAsync();
@@ -1456,6 +1467,8 @@ namespace DocumentSharingAPI.Controllers
     public class LockDocumentModel
     {
         public bool IsLocked { get; set; }
+        // Nếu admin muốn phục hồi trạng thái thành "Approved" khi mở khóa, gửi flag này = true
+        public bool? RestoreToApproved { get; set; }
     }
 
     public class TagDto
