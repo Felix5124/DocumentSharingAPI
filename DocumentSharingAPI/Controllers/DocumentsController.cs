@@ -59,61 +59,117 @@ namespace DocumentSharingAPI.Controllers
         [HttpGet]
         public async Task<IActionResult> GetAll()
         {
-            var documents = await _documentRepository.GetAllAsync();
-            var result = new List<object>();
-
-            // === BẮT ĐẦU THAY ĐỔI ===
-            // Lấy danh sách ID của tất cả tài liệu để truy vấn hiệu quả
-            var documentIds = documents.Select(d => d.DocumentId).ToList();
-
-            // Truy vấn được cập nhật để loại trừ lượt tải của chính người đăng
-            var uniqueDownloadCounts = await _context.UserDocuments
-                .Where(ud => documentIds.Contains(ud.DocumentId) && ud.ActionType == "Download")
-                // Join với bảng Documents để lấy thông tin UploadedBy
-                .Join(_context.Documents,
-                      ud => ud.DocumentId,
-                      doc => doc.DocumentId,
-                      (ud, doc) => new { UserDocument = ud, Document = doc })
-                // Điều kiện quan trọng: Lọc ra những lượt tải không phải của người đăng
-                .Where(joined => joined.UserDocument.UserId != joined.Document.UploadedBy)
-                .GroupBy(joined => joined.Document.DocumentId)
-                .Select(g => new
-                {
-                    DocumentId = g.Key,
-                    // Đếm số UserId duy nhất còn lại
-                    UniqueCount = g.Select(j => j.UserDocument.UserId).Distinct().Count()
-                })
-                .ToDictionaryAsync(x => x.DocumentId, x => x.UniqueCount);
-            // === KẾT THÚC THAY ĐỔI ===
-
-            foreach (var d in documents)
+            try
             {
-                var user = await _userRepository.GetByIdAsync(d.UploadedBy);
+                Console.WriteLine("=== GetAll Started ===");
+                var documents = await _documentRepository.GetAllAsync();
+                Console.WriteLine($"Loaded {documents.Count()} documents");
+                
+                var result = new List<object>();
 
-                // Lấy số lượt tải duy nhất từ dictionary đã tạo
-                int uniqueDownloads = uniqueDownloadCounts.GetValueOrDefault(d.DocumentId, 0);
+                // === BẮT ĐẦU THAY ĐỔI ===
+                // Lấy danh sách ID của tất cả tài liệu để truy vấn hiệu quả
+                var documentIds = documents.Select(d => d.DocumentId).ToList();
 
-                result.Add(new
+                // Truy vấn được cập nhật để loại trừ lượt tải của chính người đăng
+                var uniqueDownloadCounts = await _context.UserDocuments
+                    .Where(ud => documentIds.Contains(ud.DocumentId) && ud.ActionType == "Download")
+                    // Join với bảng Documents để lấy thông tin UploadedBy
+                    .Join(_context.Documents,
+                          ud => ud.DocumentId,
+                          doc => doc.DocumentId,
+                          (ud, doc) => new { UserDocument = ud, Document = doc })
+                    // Điều kiện quan trọng: Lọc ra những lượt tải không phải của người đăng
+                    .Where(joined => joined.UserDocument.UserId != joined.Document.UploadedBy)
+                    .GroupBy(joined => joined.Document.DocumentId)
+                    .Select(g => new
+                    {
+                        DocumentId = g.Key,
+                        // Đếm số UserId duy nhất còn lại
+                        UniqueCount = g.Select(j => j.UserDocument.UserId).Distinct().Count()
+                    })
+                    .ToDictionaryAsync(x => x.DocumentId, x => x.UniqueCount);
+                // === KẾT THÚC THAY ĐỔI ===
+
+                foreach (var d in documents)
                 {
-                    d.DocumentId,
-                    d.Title,
-                    Tags = d.DocumentTags.Where(dt => dt.Tag != null).Select(dt => new TagDto { TagId = dt.Tag.TagId, Name = dt.Tag.Name }).ToList(),
-                    d.Description,
-                    d.CoverImageUrl,
-                    d.UploadedAt,
-                    d.DownloadCount, // Đây là tổng lượt tải
-                    UniqueDownloadCount = uniqueDownloads, // Đây là lượt tải thực tế (duy nhất)
-                    d.FileType,
-                    d.IsVipOnly,
-                    ApprovalStatus = d.ApprovalStatus,
-                    ReportCount = d.ReportCount,
-                    d.IsLock,
-                    d.UploadedBy,
-                    Email = user?.Email ?? "Không xác định"
-                });
-            }
+                    try
+                    {
+                        Console.WriteLine($"Processing document: {d.Title}, DocumentTags count: {d.DocumentTags?.Count ?? -1}");
+                        
+                        var user = await _userRepository.GetByIdAsync(d.UploadedBy);
 
-            return Ok(result);
+                        // Lấy số lượt tải duy nhất từ dictionary đã tạo
+                        int uniqueDownloads = uniqueDownloadCounts.GetValueOrDefault(d.DocumentId, 0);
+
+                        // Generate SAS URL for cover image
+                        var coverImageUrl = !string.IsNullOrEmpty(d.CoverImageUrl) && d.CoverImageUrl != "covers/default-cover.png"
+                            ? _blob.GetReadSasUrl("covers", d.CoverImageUrl.Replace("covers/", ""), TimeSpan.FromHours(1))
+                            : d.CoverImageUrl;
+
+                        // Generate SAS URL for avatar
+                        var avatarUrl = !string.IsNullOrEmpty(user?.AvatarUrl)
+                            ? _blob.GetReadSasUrl("avatars", user.AvatarUrl, TimeSpan.FromHours(1))
+                            : null;
+
+                        var tags = new List<TagDto>();
+                        if (d.DocumentTags != null)
+                        {
+                            foreach (var dt in d.DocumentTags)
+                            {
+                                if (dt?.Tag != null)
+                                {
+                                    tags.Add(new TagDto { TagId = dt.Tag.TagId, Name = dt.Tag.Name });
+                                }
+                            }
+                        }
+                        Console.WriteLine($"Document {d.Title} has {tags.Count} tags");
+
+                        result.Add(new
+                        {
+                            d.DocumentId,
+                            d.Title,
+                            Tags = tags,
+                            d.Description,
+                            CoverImageUrl = coverImageUrl,
+                            d.FileSize,
+                            d.CategoryId, // Add this field for filtering
+                            Category = d.Category != null ? new { d.Category.CategoryId, d.Category.Name } : null,
+                            d.UploadedAt,
+                            d.DownloadCount, // Đây là tổng lượt tải
+                            UniqueDownloadCount = uniqueDownloads, // Đây là lượt tải thực tế (duy nhất)
+                            d.FileType,
+                            d.IsVipOnly,
+                            ApprovalStatus = d.ApprovalStatus,
+                            ReportCount = d.ReportCount,
+                            d.IsLock,
+                            d.UploadedBy,
+                            User = user != null ? new
+                            {
+                                user.UserId,
+                                user.FullName,
+                                user.Email,
+                                AvatarUrl = avatarUrl,
+                                user.IsVip
+                            } : null
+                        });
+                    }
+                    catch (Exception docEx)
+                    {
+                        Console.WriteLine($"Error processing document {d?.Title}: {docEx.Message}");
+                        Console.WriteLine($"Stack trace: {docEx.StackTrace}");
+                    }
+                }
+
+                Console.WriteLine($"=== GetAll Completed: {result.Count} documents ===");
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"=== GetAll ERROR: {ex.Message} ===");
+                Console.WriteLine($"Stack trace: {ex.StackTrace}");
+                return StatusCode(500, new { error = ex.Message, stackTrace = ex.StackTrace });
+            }
         }
 
         [HttpGet("admin/list")]
@@ -250,22 +306,40 @@ namespace DocumentSharingAPI.Controllers
             }
             // --- KẾT THÚC THAY ĐỔI ---
 
+            // Generate SAS URL for cover image
+            var coverImageUrl = !string.IsNullOrEmpty(document.CoverImageUrl) && document.CoverImageUrl != "covers/default-cover.png"
+                ? _blob.GetReadSasUrl("covers", document.CoverImageUrl.Replace("covers/", ""), TimeSpan.FromHours(1))
+                : document.CoverImageUrl;
+
+            // Generate SAS URL for avatar
+            var avatarUrl = !string.IsNullOrEmpty(user?.AvatarUrl)
+                ? _blob.GetReadSasUrl("avatars", user.AvatarUrl, TimeSpan.FromHours(1))
+                : null;
+
             // Thêm `hasReported` vào đối tượng trả về
             return Ok(new
             {
                 document.DocumentId,
                 document.Title,
-                Tags = document.DocumentTags.Where(dt => dt.Tag != null).Select(dt => new TagDto { TagId = dt.Tag.TagId, Name = dt.Tag.Name }).ToList(),
+                Tags = document.DocumentTags?.Where(dt => dt.Tag != null).Select(dt => new TagDto { TagId = dt.Tag.TagId, Name = dt.Tag.Name }).ToList() ?? new List<TagDto>(),
 
                 document.Description,
                 document.FileUrl,
-                document.CoverImageUrl,
+                CoverImageUrl = coverImageUrl,
                 document.FileType,
                 document.FileSize,
                 document.CategoryId,
                 document.Category,
                 document.UploadedBy,
-                Email = user?.Email ?? "Ẩn danh",
+                User = user != null ? new
+                {
+                    user.UserId,
+                    user.FullName,
+                    user.Email,
+                    AvatarUrl = avatarUrl,
+                    user.IsVip,
+                    user.VipExpiryDate
+                } : null,
                 document.UploadedAt,
                 document.DownloadCount,
                 document.IsVipOnly,
@@ -465,6 +539,65 @@ namespace DocumentSharingAPI.Controllers
             Console.WriteLine($"Document {id} updated successfully.");
 
             return Ok(document);
+        }
+
+        // PUT: api/Documents/{id}/metadata - Update document metadata only (JSON body)
+        [HttpPut("{id}/metadata")]
+        public async Task<IActionResult> UpdateMetadata(int id, [FromBody] UpdateDocumentMetadataDto model)
+        {
+            try
+            {
+                var document = await _documentRepository.GetByIdAsync(id);
+                if (document == null)
+                {
+                    return NotFound("Tài liệu không tồn tại.");
+                }
+
+                if (document.IsLock)
+                {
+                    return BadRequest(new { message = "Tài liệu này đang bị khóa do vi phạm quy định. Bạn không thể cập nhật nội dung." });
+                }
+
+                // Validate category
+                var category = await _categoryRepository.GetByIdAsync(model.CategoryId);
+                if (category == null)
+                {
+                    return BadRequest("Danh mục không hợp lệ.");
+                }
+
+                // Check duplicate title (excluding current document)
+                var existingDocument = await _documentRepository.GetByTitleAsync(model.Title);
+                if (existingDocument != null && existingDocument.DocumentId != id)
+                {
+                    return BadRequest("Tiêu đề tài liệu đã tồn tại.");
+                }
+
+                // Update metadata
+                document.Title = model.Title;
+                document.Description = model.Description;
+                document.CategoryId = model.CategoryId;
+                document.IsVipOnly = model.IsVipOnly;
+
+                await _documentRepository.UpdateAsync(document);
+
+                return Ok(new
+                {
+                    message = "Cập nhật tài liệu thành công",
+                    document = new
+                    {
+                        document.DocumentId,
+                        document.Title,
+                        document.Description,
+                        document.CategoryId,
+                        document.IsVipOnly
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error updating document metadata: {ex.Message}");
+                return StatusCode(500, "Lỗi khi cập nhật tài liệu");
+            }
         }
 
         [HttpDelete("{id}")]
@@ -725,7 +858,7 @@ namespace DocumentSharingAPI.Controllers
                     {
                         d.DocumentId,
                         d.Title,
-                        Tags = d.DocumentTags.Where(dt => dt.Tag != null).Select(dt => new TagDto { TagId = dt.Tag.TagId, Name = dt.Tag.Name }).ToList(),
+                        Tags = d.DocumentTags?.Where(dt => dt.Tag != null).Select(dt => new TagDto { TagId = dt.Tag.TagId, Name = dt.Tag.Name }).ToList() ?? new List<TagDto>(),
                         d.Description,
                         d.FileUrl,
                         d.CoverImageUrl,
