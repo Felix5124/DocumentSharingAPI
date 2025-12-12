@@ -263,9 +263,52 @@ namespace DocumentSharingAPI.Controllers
 
             user.FullName = model.FullName ?? user.FullName;
             user.AvatarUrl = model.AvatarUrl ?? user.AvatarUrl;
+            // Bio field - nullable, only update if provided (backward compatible)
+            if (model.Bio != null)
+                user.Bio = model.Bio;
 
             await _userRepository.UpdateAsync(user);
             return Ok(user);
+        }
+
+        [HttpPut("{id}/settings")]
+        public async Task<IActionResult> UpdateSettings(int id, [FromBody] UserSettingsModel model)
+        {
+            try
+            {
+                var user = await _userRepository.GetByIdAsync(id);
+                if (user == null)
+                    return NotFound(new { message = "User not found" });
+
+                // Serialize settings to JSON string
+                var json = System.Text.Json.JsonSerializer.Serialize(new {
+                    notifications = new {
+                        email = model.EmailNotifications,
+                        push = model.PushNotifications,
+                        sound = model.SoundEnabled
+                    },
+                    display = new {
+                        language = model.Language ?? "vi",
+                        darkMode = model.DarkMode,
+                        gridColumns = model.GridColumns
+                    },
+                    privacy = new {
+                        profileVisibility = model.ProfileVisibility ?? "public",
+                        showEmail = model.ShowEmail,
+                        allowFollow = model.AllowFollow
+                    }
+                });
+
+                user.Settings = json;
+                await _userRepository.UpdateAsync(user);
+                
+                return Ok(new { message = "Settings updated successfully", settings = json });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error updating settings: {ex.Message}");
+                return StatusCode(500, new { message = "Error updating settings" });
+            }
         }
 
         [HttpDelete("{id}")]
@@ -927,6 +970,7 @@ namespace DocumentSharingAPI.Controllers
     {
         public string? FullName { get; set; }
         public string? AvatarUrl { get; set; }
+        public string? Bio { get; set; }  // Nullable - backward compatible với web
     }
 
     public class VipStatusModel
@@ -937,6 +981,24 @@ namespace DocumentSharingAPI.Controllers
     public class LockUserModel
     {
         public bool IsLocked { get; set; }
+    }
+
+    public class UserSettingsModel
+    {
+        // Notification settings
+        public bool EmailNotifications { get; set; } = true;
+        public bool PushNotifications { get; set; } = true;
+        public bool SoundEnabled { get; set; } = true;
+
+        // Display settings
+        public string? Language { get; set; } = "vi";
+        public bool DarkMode { get; set; } = false;
+        public int GridColumns { get; set; } = 2;
+
+        // Privacy settings
+        public string? ProfileVisibility { get; set; } = "public";  // public, friends, private
+        public bool ShowEmail { get; set; } = false;
+        public bool AllowFollow { get; set; } = true;
     }
 
     public class AuthProviderRegisterModel

@@ -13,6 +13,8 @@ namespace DocumentSharingAPI.Models
         public string Email { get; set; }
         public string FullName { get; set; }
         public string? AvatarUrl { get; set; }
+        public string? Bio { get; set; }  // Giới thiệu bản thân (nullable, backward compatible)
+        public string? Settings { get; set; }  // JSON string chứa user settings (notifications, privacy, display)
         public bool IsAdmin { get; set; } = false;
         public bool IsLocked { get; set; } = false;
         public bool IsEmailVerified { get; set; } = false;
