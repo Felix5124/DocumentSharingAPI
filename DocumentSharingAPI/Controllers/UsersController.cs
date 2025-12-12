@@ -209,6 +209,7 @@ namespace DocumentSharingAPI.Controllers
                 user.FullName,
                 user.FirebaseUid,
                 avatarUrl,
+                user.Bio,
                 user.IsVip,
                 user.VipExpiryDate,
                 user.IsAdmin,
@@ -239,6 +240,7 @@ namespace DocumentSharingAPI.Controllers
                 user.Email,
                 user.FullName,
                 avatarUrl,
+                user.Bio,
                 user.IsVip,
                 user.VipExpiryDate,
                 user.IsAdmin,
@@ -268,7 +270,40 @@ namespace DocumentSharingAPI.Controllers
                 user.Bio = model.Bio;
 
             await _userRepository.UpdateAsync(user);
-            return Ok(user);
+            
+            var avatarUrl = _blob.GetReadSasUrl("avatars", NormalizeAvatar(user.AvatarUrl), TimeSpan.FromHours(1));
+            
+            return Ok(new
+            {
+                user.UserId,
+                user.FirebaseUid,
+                user.Email,
+                user.FullName,
+                avatarUrl,
+                user.Bio,
+                user.Settings,
+                user.IsAdmin,
+                user.IsLocked,
+                user.IsEmailVerified,
+                user.EmailVerificationToken,
+                user.EmailVerificationTokenExpiry,
+                user.PasswordResetToken,
+                user.PasswordResetTokenExpiry,
+                user.CreatedAt,
+                user.CommentCount,
+                user.IsVip,
+                user.VipExpiryDate,
+                user.VipDownloadsUsedToday,
+                user.RegularDownloadsUsedToday,
+                user.VipBonusDownloads,
+                user.RegularBonusDownloads,
+                user.LastDownloadResetDate,
+                user.UploadedDocuments,
+                user.Badges,
+                user.Follows,
+                user.Followers,
+                user.VipSubscriptions
+            });
         }
 
         [HttpPut("{id}/settings")]

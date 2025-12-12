@@ -13,6 +13,17 @@ namespace DocumentSharingAPI.Repositories
         {
         }
 
+        // Override GetAllAsync to include DocumentTags
+        public new async Task<IEnumerable<Document>> GetAllAsync()
+        {
+            return await _context.Documents
+                .Include(d => d.Category)
+                .Include(d => d.User)
+                .Include(d => d.DocumentTags)
+                    .ThenInclude(dt => dt.Tag)
+                .ToListAsync();
+        }
+
         public new async Task DeleteAsync(int id) // Thêm từ khóa new
         {
             try
