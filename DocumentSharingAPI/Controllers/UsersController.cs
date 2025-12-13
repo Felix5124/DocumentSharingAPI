@@ -365,27 +365,6 @@ namespace DocumentSharingAPI.Controllers
             }
         }
 
-        [HttpDelete("{id}")]
-        public async Task<IActionResult> Delete(int id)
-        {
-            var user = await _userRepository.GetByIdAsync(id);
-            if (user == null)
-                return NotFound();
-
-            if (!string.IsNullOrEmpty(user.AvatarUrl) &&
-                !user.AvatarUrl.Equals("default-avatar.png", StringComparison.OrdinalIgnoreCase))
-            {
-                await _blob.DeleteAsync("avatars", NormalizeAvatar(user.AvatarUrl));
-            }
-
-            await _userRepository.DeleteAsync(id);
-
-            if (!string.IsNullOrEmpty(user.FirebaseUid))
-                await FirebaseAuth.DefaultInstance.DeleteUserAsync(user.FirebaseUid);
-
-            return NoContent();
-        }
-
         [HttpPost("{id}/avatar")]
         public async Task<IActionResult> UploadAvatar(int id, IFormFile file)
         {
