@@ -256,6 +256,7 @@ namespace DocumentSharingAPI.Controllers
                 user.FullName,
                 avatarUrl,
                 user.Bio,
+                user.Settings,
                 user.IsVip,
                 user.VipExpiryDate,
                 user.IsAdmin,
@@ -336,19 +337,19 @@ namespace DocumentSharingAPI.Controllers
                 // Serialize settings to JSON string
                 var json = System.Text.Json.JsonSerializer.Serialize(new {
                     notifications = new {
-                        email = model.EmailNotifications,
-                        push = model.PushNotifications,
-                        sound = model.SoundEnabled
-                    },
-                    display = new {
-                        language = model.Language ?? "vi",
-                        darkMode = model.DarkMode,
-                        gridColumns = model.GridColumns
+                        email = model.Notifications.Email,
+                        push = model.Notifications.Push,
+                        sound = model.Notifications.Sound,
+                        newDocuments = model.Notifications.NewDocuments,
+                        newComments = model.Notifications.NewComments,
+                        newFollowers = model.Notifications.NewFollowers,
+                        likes = model.Notifications.Likes,
+                        vip = model.Notifications.Vip
                     },
                     privacy = new {
-                        profileVisibility = model.ProfileVisibility ?? "public",
-                        showEmail = model.ShowEmail,
-                        allowFollow = model.AllowFollow
+                        profileVisibility = model.Privacy.ProfileVisibility ?? "public",
+                        showEmail = model.Privacy.ShowEmail,
+                        allowFollow = model.Privacy.AllowFollow
                     }
                 });
 
@@ -498,6 +499,74 @@ namespace DocumentSharingAPI.Controllers
             catch (Exception ex)
             {
                 return StatusCode(500, $"Internal server error: {ex.Message}");
+            }
+        }
+
+        [HttpDelete("{userId}")]
+        public async Task<IActionResult> DeleteAccount(int userId, [FromBody] DeleteAccountModel model)
+        {
+            try
+            {
+                var user = await _userRepository.GetByIdAsync(userId);
+                if (user == null)
+                    return NotFound(new { message = "Không tìm thấy người dùng." });
+
+                // Verify password
+                try
+                {
+                    await FirebaseAuth.DefaultInstance.GetUserAsync(user.FirebaseUid);
+                    // Note: Firebase Admin SDK doesn't provide password verification
+                    // In production, you should verify the password via Firebase Auth client SDK
+                    // or implement custom token verification
+                }
+                catch (FirebaseAdmin.Auth.FirebaseAuthException)
+                {
+                    return Unauthorized(new { message = "Xác thực thất bại." });
+                }
+
+                // Delete user's avatar if not default
+                if (!string.IsNullOrEmpty(user.AvatarUrl) &&
+                    !user.AvatarUrl.Equals("default-avatar.png", StringComparison.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        await _blob.DeleteAsync("avatars", NormalizeAvatar(user.AvatarUrl));
+                    }
+                    catch { /* Ignore blob deletion errors */ }
+                }
+
+                // Delete user's uploaded documents and files
+                if (user.UploadedDocuments != null)
+                {
+                    foreach (var doc in user.UploadedDocuments.ToList())
+                    {
+                        if (!string.IsNullOrEmpty(doc.FileUrl))
+                        {
+                            try
+                            {
+                                await _blob.DeleteAsync("documents", doc.FileUrl);
+                            }
+                            catch { /* Ignore blob deletion errors */ }
+                        }
+                        _context.Documents.Remove(doc);
+                    }
+                }
+
+                // Delete from Firebase Auth
+                try
+                {
+                    await FirebaseAuth.DefaultInstance.DeleteUserAsync(user.FirebaseUid);
+                }
+                catch { /* Continue even if Firebase deletion fails */ }
+
+                // Delete from database (cascade delete will handle related records)
+                await _userRepository.DeleteAsync(userId);
+
+                return Ok(new { message = "Tài khoản đã được xóa thành công." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = $"Lỗi khi xóa tài khoản: {ex.Message}" });
             }
         }
 
@@ -1039,17 +1108,27 @@ namespace DocumentSharingAPI.Controllers
     public class UserSettingsModel
     {
         // Notification settings
-        public bool EmailNotifications { get; set; } = true;
-        public bool PushNotifications { get; set; } = true;
-        public bool SoundEnabled { get; set; } = true;
-
-        // Display settings
-        public string? Language { get; set; } = "vi";
-        public bool DarkMode { get; set; } = false;
-        public int GridColumns { get; set; } = 2;
-
+        public NotificationSettings Notifications { get; set; } = new NotificationSettings();
+        
         // Privacy settings
-        public string? ProfileVisibility { get; set; } = "public";  // public, friends, private
+        public PrivacySettings Privacy { get; set; } = new PrivacySettings();
+    }
+
+    public class NotificationSettings
+    {
+        public bool Email { get; set; } = true;
+        public bool Push { get; set; } = true;
+        public bool Sound { get; set; } = true;
+        public bool NewDocuments { get; set; } = true;
+        public bool NewComments { get; set; } = true;
+        public bool NewFollowers { get; set; } = true;
+        public bool Likes { get; set; } = false;
+        public bool Vip { get; set; } = true;
+    }
+
+    public class PrivacySettings
+    {
+        public string ProfileVisibility { get; set; } = "public";
         public bool ShowEmail { get; set; } = false;
         public bool AllowFollow { get; set; } = true;
     }
@@ -1089,5 +1168,10 @@ namespace DocumentSharingAPI.Controllers
         public string Email { get; set; } = string.Empty;
         public string Token { get; set; } = string.Empty;
         public string NewPassword { get; set; } = string.Empty;
+    }
+
+    public class DeleteAccountModel
+    {
+        public string Password { get; set; } = string.Empty;
     }
 }
