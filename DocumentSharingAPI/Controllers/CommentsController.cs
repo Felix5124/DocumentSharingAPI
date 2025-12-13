@@ -76,6 +76,15 @@ namespace DocumentSharingAPI.Controllers
             if (user == null)
                 return BadRequest("User not found.");
 
+            // Check if user has downloaded the document
+            var hasDownloaded = await _context.UserDocuments
+                .AnyAsync(ud => ud.UserId == model.UserId && ud.DocumentId == model.DocumentId);
+            
+            if (!hasDownloaded)
+            {
+                return BadRequest("Bạn cần tải tài liệu này trước khi bình luận.");
+            }
+
             var comment = new Comment
             {
                 DocumentId = model.DocumentId,
