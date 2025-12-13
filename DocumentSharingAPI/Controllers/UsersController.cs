@@ -17,14 +17,16 @@ namespace DocumentSharingAPI.Controllers
         private readonly IBlobService _blob;
         private readonly IEmailService _emailService;
         private readonly IConfiguration _configuration;
+        private readonly IFollowRepository _followRepository;
 
-        public UsersController(IUserRepository userRepository, AppDbContext context, IBlobService blob, IEmailService emailService, IConfiguration configuration)
+        public UsersController(IUserRepository userRepository, AppDbContext context, IBlobService blob, IEmailService emailService, IConfiguration configuration, IFollowRepository followRepository)
         {
             _userRepository = userRepository;
             _context = context;
             _blob = blob;
             _emailService = emailService;
             _configuration = configuration;
+            _followRepository = followRepository;
         }
 
         // Helper: chuẩn hóa tên file avatar (bỏ prefix “avatars/” nếu có)
@@ -234,6 +236,19 @@ namespace DocumentSharingAPI.Controllers
 
             var avatarUrl = _blob.GetReadSasUrl("avatars", NormalizeAvatar(user.AvatarUrl), TimeSpan.FromHours(1));
 
+            // Get followers count (people following this user)
+            var followers = await _followRepository.GetFollowersByUserIdAsync(id);
+            var followersCount = followers.Count();
+
+            // Get following count (people this user follows)
+            var following = await _followRepository.GetByUserIdAsync(id);
+            var followingCount = following.Count();
+
+            // Get uploaded documents count
+            var uploadedDocs = await _context.Documents
+                .Where(d => d.UploadedBy == id)
+                .CountAsync();
+
             return Ok(new
             {
                 user.UserId,
@@ -252,7 +267,10 @@ namespace DocumentSharingAPI.Controllers
                 user.RegularDownloadsUsedToday,
                 user.VipBonusDownloads,
                 user.RegularBonusDownloads,
-                user.LastDownloadResetDate
+                user.LastDownloadResetDate,
+                followersCount,
+                followingCount,
+                uploadedDocumentsCount = uploadedDocs
             });
         }
 

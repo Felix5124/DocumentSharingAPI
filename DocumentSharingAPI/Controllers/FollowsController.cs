@@ -95,8 +95,7 @@ namespace DocumentSharingAPI.Controllers
                     return new
                     {
                         f.FollowId,
-                        f.UserId,
-                        f.FollowedUserId,
+                        UserId = f.FollowedUserId,  // Return the followed user's ID
                         followed.FullName,
                         followed.Email,
                         AvatarUrl = _blob.GetReadSasUrl("avatars", NormalizeAvatar(followed.AvatarUrl), TimeSpan.FromHours(1))
@@ -104,6 +103,24 @@ namespace DocumentSharingAPI.Controllers
                 });
 
                 return Ok(detailed);
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Internal server error: {ex.Message}");
+            }
+        }
+
+        // Check if user is following another user
+        [HttpGet("check")]
+        public async Task<IActionResult> CheckFollowStatus([FromQuery] int userId, [FromQuery] int followedUserId)
+        {
+            if (userId <= 0 || followedUserId <= 0)
+                return BadRequest("Invalid user IDs.");
+
+            try
+            {
+                var follow = await _followRepository.GetFollowAsync(userId, followedUserId);
+                return Ok(new { isFollowing = follow != null, followId = follow?.FollowId });
             }
             catch (Exception ex)
             {
@@ -173,6 +190,30 @@ namespace DocumentSharingAPI.Controllers
                     return NotFound($"Follow with ID {id} not found.");
 
                 await _followRepository.DeleteAsync(id);
+                return NoContent();
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, $"Internal server error: {ex.Message}");
+            }
+        }
+
+        // Alternative unfollow by user IDs
+        [HttpPost("unfollow")]
+        public async Task<IActionResult> UnfollowByUserIds([FromBody] FollowModel model)
+        {
+            if (model.UserId == null || model.UserId <= 0)
+                return BadRequest("Invalid user ID.");
+            if (model.FollowedUserId == null || model.FollowedUserId <= 0)
+                return BadRequest("Invalid followed user ID.");
+
+            try
+            {
+                var follow = await _followRepository.GetFollowAsync(model.UserId.Value, model.FollowedUserId.Value);
+                if (follow == null)
+                    return NotFound("Not following this user.");
+
+                await _followRepository.DeleteAsync(follow.FollowId);
                 return NoContent();
             }
             catch (Exception ex)
