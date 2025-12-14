@@ -63,7 +63,14 @@ namespace DocumentSharingAPI.Controllers
             {
                 Console.WriteLine("=== GetAll Started ===");
                 var documents = await _documentRepository.GetAllAsync();
-                Console.WriteLine($"Loaded {documents.Count()} documents");
+                
+                // Filter: Only show Approved or SemiApproved documents, not locked
+                documents = documents.Where(d => 
+                    (d.ApprovalStatus == "Approved" || d.ApprovalStatus == "SemiApproved") 
+                    && !d.IsLock
+                ).ToList();
+                
+                Console.WriteLine($"Loaded {documents.Count()} documents (after filtering Pending)");
                 
                 var result = new List<object>();
 
