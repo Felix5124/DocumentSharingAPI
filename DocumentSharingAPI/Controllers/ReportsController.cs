@@ -97,7 +97,7 @@ namespace DocumentSharingAPI.Controllers
             // 1. Lọc (Filtering)
             if (!string.IsNullOrEmpty(queryParams.Reason))
             {
-                query = query.Where(r => r.Reason == queryParams.Reason);
+                query = query.Where(r => r.Reason.ToLower() == queryParams.Reason.ToLower());
             }
 
             // 2. Nhóm các báo cáo theo DocumentId
