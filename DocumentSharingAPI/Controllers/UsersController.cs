@@ -979,7 +979,7 @@ namespace DocumentSharingAPI.Controllers
                 await _userRepository.UpdateAsync(user);
 
                 // Create reset link
-                var frontendUrl = _configuration["Frontend:Url"] ?? "http://localhost:5173";
+                var frontendUrl = _configuration["FrontendUrl"] ?? "http://localhost:5173";
                 var resetLink = $"{frontendUrl}/reset-password?token={resetToken}&email={Uri.EscapeDataString(user.Email)}";
 
                 // Send email
