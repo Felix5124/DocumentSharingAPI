@@ -433,6 +433,11 @@ namespace DocumentSharingAPI.Controllers
             document.CategoryId = model.CategoryId != 0 ? model.CategoryId : document.CategoryId;
             document.IsVipOnly = model.IsVipOnly;
 
+            Console.WriteLine($"[Update] incoming CoverImage present: { (model.CoverImage != null ? "yes" : "no") }");
+            if (model.CoverImage != null)
+            {
+                Console.WriteLine($"[Update] CoverImage filename: {model.CoverImage.FileName}, length: {model.CoverImage.Length}");
+            }
             if (model.CoverImage != null && model.CoverImage.Length > 0)
             {
                 var allowedImageExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".tiff", ".tif", ".heic", ".heif" };
@@ -463,8 +468,10 @@ namespace DocumentSharingAPI.Controllers
                 var newGuid = Guid.NewGuid().ToString("N");
                 var newFileName = $"{newGuid}{coverExtension}";
                 await using var coverStream = model.CoverImage.OpenReadStream();
+                Console.WriteLine($"[Update] uploading cover to blob covers/{newFileName}");
                 await _blob.UploadAsync("covers", newFileName, coverStream, model.CoverImage.ContentType);
                 document.CoverImageUrl = $"covers/{newFileName}";
+                Console.WriteLine($"[Update] set document.CoverImageUrl = {document.CoverImageUrl}");
             }
 
 
@@ -543,7 +550,7 @@ namespace DocumentSharingAPI.Controllers
             }
 
             await _documentRepository.UpdateAsync(document);
-            Console.WriteLine($"Document {id} updated successfully.");
+            Console.WriteLine($"Document {id} updated successfully. CoverImageUrl={document.CoverImageUrl}");
 
             return Ok(document);
         }
