@@ -16,7 +16,9 @@ var builder = WebApplication.CreateBuilder(args);
 
 if (builder.Environment.IsDevelopment())
 {
-    builder.WebHost.UseUrls("https://localhost:7013");
+    // HTTPS với certificate tự ký - Flutter đã config bỏ qua SSL validation trong development
+    // 0.0.0.0 = cho phép kết nối từ mạng LAN
+    builder.WebHost.UseUrls("https://0.0.0.0:7013", "https://localhost:7013");
 }
 
 // Configure logging
