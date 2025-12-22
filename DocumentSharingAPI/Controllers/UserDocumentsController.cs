@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using System.Threading.Tasks;
+using System.Linq;
 
 namespace DocumentSharingAPI.Controllers
 {
@@ -165,6 +166,145 @@ namespace DocumentSharingAPI.Controllers
 
             await _userDocumentRepository.DeleteAsync(documentId);
             return Ok(new { Message = "Removed from library" });
+        }
+
+        // --- THÊM MỚI: Tìm kiếm và phân trang cho Uploads ---
+        [HttpGet("search-uploads")]
+        public async Task<IActionResult> SearchUserUploads(
+            [FromQuery] int userId,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 12,
+            [FromQuery] string keyword = "",
+            [FromQuery] int? categoryId = null,
+            [FromQuery] string sortBy = "newest")
+        {
+            if (userId <= 0) return BadRequest("Invalid User ID");
+
+            var query = _context.Documents
+                .AsNoTracking()
+                .Where(d => d.UploadedBy == userId);
+
+            // 1. Lọc
+            if (!string.IsNullOrEmpty(keyword))
+            {
+                query = query.Where(d => d.Title.Contains(keyword) || d.Description.Contains(keyword));
+            }
+
+            if (categoryId.HasValue && categoryId.Value > 0)
+            {
+                query = query.Where(d => d.CategoryId == categoryId.Value);
+            }
+
+            // 2. Sắp xếp
+            query = sortBy.ToLower() switch
+            {
+                "downloads" => query.OrderByDescending(d => d.DownloadCount),
+                "oldest" => query.OrderBy(d => d.UploadedAt),
+                "name" => query.OrderBy(d => d.Title),
+                _ => query.OrderByDescending(d => d.UploadedAt) // newest
+            };
+
+            // 3. Phân trang
+            var totalCount = await query.CountAsync();
+            var items = await query
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Include(d => d.Category)
+                .Select(d => new
+                {
+                    d.DocumentId,
+                    d.Title,
+                    d.Description,
+                    d.CoverImageUrl,
+                    d.FileType,
+                    d.DownloadCount,
+                    d.UploadedAt,
+                    d.ApprovalStatus,
+                    d.IsVipOnly,
+                    d.IsLock,
+                    CategoryName = d.Category.Name
+                })
+                .ToListAsync();
+
+            return Ok(new
+            {
+                data = items,
+                total = totalCount,
+                page,
+                pageSize,
+                totalPages = (int)Math.Ceiling((double)totalCount / pageSize)
+            });
+        }
+
+        // --- THÊM MỚI: Tìm kiếm và phân trang cho Downloads ---
+        [HttpGet("search-downloads")]
+        public async Task<IActionResult> SearchUserDownloads(
+            [FromQuery] int userId,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 12,
+            [FromQuery] string keyword = "",
+            [FromQuery] int? categoryId = null,
+            [FromQuery] string sortBy = "newest")
+        {
+            if (userId <= 0) return BadRequest("Invalid User ID");
+
+            var query = _context.UserDocuments
+                .AsNoTracking()
+                .Where(ud => ud.UserId == userId && ud.ActionType == "Download")
+                .Include(ud => ud.Document)
+                .ThenInclude(d => d.Category)
+                .Select(ud => ud.Document); // Lấy ra Document từ UserDocument
+
+            // 1. Lọc
+            if (!string.IsNullOrEmpty(keyword))
+            {
+                query = query.Where(d => d.Title.Contains(keyword) || d.Description.Contains(keyword));
+            }
+
+            if (categoryId.HasValue && categoryId.Value > 0)
+            {
+                query = query.Where(d => d.CategoryId == categoryId.Value);
+            }
+
+            // 2. Sắp xếp (Lưu ý: Sort theo ngày download sẽ phức tạp hơn nếu select Document ngay từ đầu,
+            // nhưng ở đây ta sort theo thuộc tính Document cho đồng nhất UI)
+            query = sortBy.ToLower() switch
+            {
+                "downloads" => query.OrderByDescending(d => d.DownloadCount),
+                "oldest" => query.OrderBy(d => d.UploadedAt), // Hoặc ud.AddedAt nếu muốn sort theo ngày tải
+                "name" => query.OrderBy(d => d.Title),
+                _ => query.OrderByDescending(d => d.UploadedAt) // newest
+            };
+
+            // 3. Phân trang
+            var totalCount = await query.CountAsync();
+            var items = await query
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(d => new
+                {
+                    d.DocumentId,
+                    d.Title,
+                    d.Description,
+                    d.CoverImageUrl,
+                    d.FileType,
+                    d.DownloadCount,
+                    d.UploadedAt, // Hoặc ngày tải nếu join lại
+                    d.ApprovalStatus,
+                    d.IsVipOnly,
+                    d.IsLock,
+                    CategoryName = d.Category.Name
+                })
+                .ToListAsync();
+
+            return Ok(new
+            {
+                data = items,
+                total = totalCount,
+                page,
+                pageSize,
+                totalPages = (int)Math.Ceiling((double)totalCount / pageSize)
+            });
         }
     }
 
