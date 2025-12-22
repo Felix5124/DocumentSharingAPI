@@ -129,7 +129,7 @@ namespace DocumentSharingAPI.Services
 
             // === LOGIC DUYỆT DỰA TRÊN PHẦN TRĂM (%) ===
             
-            // Điều kiện tiên quyết: Phải có ít nhất 40 lượt tải để dữ liệu đáng tin cậy.
+            // Điều kiện tiên quyết: Phải có ít nhất 20 lượt tải để dữ liệu đáng tin cậy.
             if (uniqueDownloads >= 2)
             {
                 double reportRatio = (double)reports / uniqueDownloads;
