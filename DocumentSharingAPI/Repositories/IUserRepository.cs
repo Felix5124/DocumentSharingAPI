@@ -21,6 +21,11 @@ namespace DocumentSharingAPI.Repositories
         Task AddBonusDownloadAsync(int userId, bool isVipBonus);
         Task<User> CheckAndResetDailyLimitsAsync(int userId);
 
+        // Upload Limit System methods
+        Task<User> CheckAndResetUploadLimitsAsync(int userId);
+        Task<bool> CanUploadAsync(int userId, bool isVipDocument);
+        Task UpdateUploadCountsAsync(int userId, bool isVipUpload);
+
         // Phân trang tài khoản người dùng dành cho admin
         Task<(IEnumerable<User>, int)> GetAdminUsersAsync(int page, int pageSize, string keyword, bool? isLocked, string? role);
 

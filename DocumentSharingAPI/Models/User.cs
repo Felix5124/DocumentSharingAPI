@@ -34,6 +34,11 @@ namespace DocumentSharingAPI.Models
         public int RegularBonusDownloads { get; set; } = 0; // Bonus downloads thường từ việc upload tài liệu
         public DateTime LastDownloadResetDate { get; set; } = DateTime.Today;
 
+        // Upload Limit System
+        public int RegularUploadsUsedToday { get; set; } = 0; // Số file thường đã upload hôm nay
+        public int VipUploadsUsedToday { get; set; } = 0; // Số file premium đã upload hôm nay
+        public DateTime LastUploadResetDate { get; set; } = DateTime.Today; // Đã có sẵn trong DB
+
         // Quan hệ
         public ICollection<Document> UploadedDocuments { get; set; }
         public ICollection<UserBadge> Badges { get; set; }

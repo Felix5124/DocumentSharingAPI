@@ -644,6 +644,56 @@ namespace DocumentSharingAPI.Controllers
             }
         }
 
+        // Get upload limit info
+        [HttpGet("{id}/upload-limit")]
+        public async Task<IActionResult> GetUploadLimit(int id)
+        {
+            try
+            {
+                var user = await _userRepository.CheckAndResetUploadLimitsAsync(id);
+                if (user == null)
+                    return NotFound(new { message = "User not found." });
+
+                bool isVipActive = user.IsVip && (!user.VipExpiryDate.HasValue || user.VipExpiryDate.Value > DateTime.Now);
+                
+                if (isVipActive)
+                {
+                    // VIP: 2 regular + 2 VIP
+                    return Ok(new
+                    {
+                        isVip = true,
+                        regularUploadsUsed = user.RegularUploadsUsedToday,
+                        vipUploadsUsed = user.VipUploadsUsedToday,
+                        maxRegularUploads = 2,
+                        maxVipUploads = 2,
+                        remainingRegular = Math.Max(2 - user.RegularUploadsUsedToday, 0),
+                        remainingVip = Math.Max(2 - user.VipUploadsUsedToday, 0),
+                        lastResetDate = user.LastUploadResetDate
+                    });
+                }
+                else
+                {
+                    // Regular: 1 file/ngày
+                    int totalUsed = user.RegularUploadsUsedToday + user.VipUploadsUsedToday;
+                    return Ok(new
+                    {
+                        isVip = false,
+                        regularUploadsUsed = totalUsed,
+                        vipUploadsUsed = 0,
+                        maxRegularUploads = 1,
+                        maxVipUploads = 0,
+                        remainingRegular = Math.Max(1 - totalUsed, 0),
+                        remainingVip = 0,
+                        lastResetDate = user.LastUploadResetDate
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = $"Internal server error: {ex.Message}" });
+            }
+        }
+
         [HttpGet("admin/list")]
         // [Authorize(Roles = "Admin")] // Uncomment nếu đã cấu hình Role chuẩn
         public async Task<IActionResult> GetUsersForAdmin(
