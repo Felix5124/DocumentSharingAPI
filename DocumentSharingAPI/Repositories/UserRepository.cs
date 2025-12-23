@@ -22,6 +22,64 @@ namespace DocumentSharingAPI.Repositories
             return await _context.Users.FirstOrDefaultAsync(u => u.Email == email);
         }
 
+        // Upload Limit System
+        public async Task<User> CheckAndResetUploadLimitsAsync(int userId)
+        {
+            var user = await _context.Users.FindAsync(userId);
+            if (user == null) return null;
+
+            // Reset nếu qua ngày mới
+            if (user.LastUploadResetDate.Date < DateTime.Today)
+            {
+                user.RegularUploadsUsedToday = 0;
+                user.VipUploadsUsedToday = 0;
+                user.LastUploadResetDate = DateTime.Today;
+                await _context.SaveChangesAsync();
+            }
+
+            return user;
+        }
+
+        public async Task<bool> CanUploadAsync(int userId, bool isVipDocument)
+        {
+            var user = await CheckAndResetUploadLimitsAsync(userId);
+            if (user == null) return false;
+
+            bool isVipActive = user.IsVip && (!user.VipExpiryDate.HasValue || user.VipExpiryDate.Value > DateTime.Now);
+
+            // VIP document chỉ VIP mới upload được
+            if (isVipDocument && !isVipActive) return false;
+
+            // User thường: chỉ upload được 1 file/ngày (bất kể loại)
+            if (!isVipActive)
+            {
+                return (user.RegularUploadsUsedToday + user.VipUploadsUsedToday) < 1;
+            }
+
+            // User VIP: 2 regular + 2 VIP
+            if (isVipDocument)
+            {
+                return user.VipUploadsUsedToday < 2;
+            }
+            else
+            {
+                return user.RegularUploadsUsedToday < 2;
+            }
+        }
+
+        public async Task UpdateUploadCountsAsync(int userId, bool isVipUpload)
+        {
+            var user = await _context.Users.FindAsync(userId);
+            if (user == null) return;
+
+            if (isVipUpload)
+                user.VipUploadsUsedToday++;
+            else
+                user.RegularUploadsUsedToday++;
+            
+            await _context.SaveChangesAsync();
+        }
+
         // Points system removed - VIP system used instead
 
         public async Task UpdateLockStatusAsync(int userId, bool isLocked)
