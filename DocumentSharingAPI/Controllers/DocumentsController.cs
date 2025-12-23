@@ -697,6 +697,31 @@ namespace DocumentSharingAPI.Controllers
                 return BadRequest("Tiêu đề tài liệu đã tồn tại.");
             }
 
+            // --- KIỂM TRA GIỚI HẠN UPLOAD ---
+            bool isVipActive = user.IsVip && (!user.VipExpiryDate.HasValue || user.VipExpiryDate.Value > DateTime.Now);
+            bool isVipDocument = model.IsVipOnly && isVipActive; // Chỉ VIP mới được đăng tài liệu VIP
+
+            var canUpload = await _userRepository.CanUploadAsync(model.UploadedBy, isVipDocument);
+            if (!canUpload)
+            {
+                if (isVipDocument && !isVipActive)
+                {
+                    return BadRequest("Chỉ tài khoản Premium mới có thể upload tài liệu Premium.");
+                }
+                else if (isVipActive)
+                {
+                    if (isVipDocument)
+                        return BadRequest("Bạn đã hết lượt upload tài liệu Premium");
+                    else
+                        return BadRequest("Bạn đã hết lượt upload tài liệu thường");
+                }
+                else
+                {
+                    return BadRequest("Bạn đã hết lượt upload hôm nay");
+                }
+            }
+            // --- KẾT THÚC KIỂM TRA GIỚI HẠN ---
+
             // --- BẮT ĐẦU LOGIC VALIDATION MỚI ---
 
             // 1. Kiểm tra kích thước file (ví dụ: 50MB)
@@ -809,6 +834,9 @@ namespace DocumentSharingAPI.Controllers
                 AddedAt = DateTime.Now
             };
             await _userDocumentRepository.AddAsync(userDocument);
+
+            // Cập nhật số lượng upload đã sử dụng
+            await _userRepository.UpdateUploadCountsAsync(model.UploadedBy, isVipDocument);
 
             var uploadCount = await _context.Documents.CountAsync(d => d.UploadedBy == model.UploadedBy);
             if (uploadCount >= 5)
