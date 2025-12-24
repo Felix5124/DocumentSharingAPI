@@ -33,49 +33,29 @@ namespace DocumentSharingAPI.Services
                 return;
             }
 
-            bool shouldChangeToPending = false;
-            int reports = document.ReportCount;
+            int reportCount = document.ReportCount;
+            bool isVip = document.IsVipOnly;
+            int threshold = int.MaxValue;
 
-            // Lấy số người dùng thực tế đã tải (tránh 1 người tải nhiều lần làm loãng tỉ lệ)
-            int uniqueDownloads = await _context.UserDocuments
-                .Where(ud => ud.DocumentId == documentId && ud.ActionType == "Download")
-                .Select(ud => ud.UserId)
-                .Distinct()
-                .CountAsync();
-
-            // Tránh chia cho 0, mặc định là 1 nếu chưa có ai tải (để tính toán không bị lỗi)
-            if (uniqueDownloads == 0) uniqueDownloads = 1; 
-            
-            double reportRatio = (double)reports / uniqueDownloads;
-
+            // Thiết lập ngưỡng dựa trên trạng thái và loại tài liệu
             if (document.ApprovalStatus == "SemiApproved")
             {
-                // Logic cho tài liệu "Chưa kiểm duyệt": Nghiêm ngặt hơn
-                // 1. Giai đoạn ít tải (< 20): Chỉ cần 3 báo cáo là gỡ để an toàn.
-                if (uniqueDownloads < 20 && reports >= 3)
-                {
-                    shouldChangeToPending = true;
-                }
-                // 2. Giai đoạn nhiều tải (>= 20): Nếu tỷ lệ báo cáo >= 15% -> Gỡ
-                else if (uniqueDownloads >= 20 && reportRatio > 0.15)
-                {
-                    shouldChangeToPending = true;
-                }
+                // Tài liệu Premium chưa kiểm duyệt: 3 báo cáo, Thường: 2 báo cáo
+                threshold = isVip ? 3 : 2;
             }
             else if (document.ApprovalStatus == "Approved")
             {
-                // Logic cho tài liệu "ĐÃ DUYỆT": Nới lỏng hơn (để tránh bị spam report phá hoại)
-                // Điều kiện: tỷ lệ báo cáo >= 15%
-                // if (reports >= 8 && reportRatio >= 0.20)
-                if (reports >= 2)
-                {
-                    shouldChangeToPending = true;
-                }
+                // Tài liệu Premium đã kiểm duyệt: 5 báo cáo, Thường: 4 báo cáo
+                threshold = isVip ? 5 : 4;
             }
 
-            if (shouldChangeToPending)
+            // Kiểm tra điều kiện hạ cấp
+            if (reportCount >= threshold)
             {
                 document.ApprovalStatus = "Pending";
+                // Có thể set IsLock = true nếu muốn khóa ngay lập tức, ở đây ta về Pending để admin duyệt lại
+                // document.IsLock = true;
+                
                 await _documentRepository.UpdateAsync(document);
 
                 // Gửi thông báo cho Admin
@@ -85,7 +65,7 @@ namespace DocumentSharingAPI.Services
                     var adminNotification = new Notification
                     {
                         UserId = admin.UserId,
-                        Message = $"Cảnh báo: Tài liệu '{document.Title}' có tỷ lệ báo cáo cao ({reports} reports/{uniqueDownloads} downloads). Đã chuyển về Pending.",
+                        Message = $"Cảnh báo: Tài liệu '{document.Title}' (Loại: {(isVip ? "VIP" : "Thường")}) đã nhận {reportCount} báo cáo. Đã chuyển về trạng thái Chờ duyệt (Pending).",
                         DocumentId = document.DocumentId,
                         SentAt = DateTime.Now,
                         IsRead = false
@@ -97,7 +77,7 @@ namespace DocumentSharingAPI.Services
                 var uploaderNotification = new Notification
                 {
                     UserId = document.UploadedBy,
-                    Message = $"Tài liệu '{document.Title}' của bạn bị tạm khóa do nhận nhiều báo cáo vi phạm từ cộng đồng.",
+                    Message = $"Tài liệu '{document.Title}' của bạn bị tạm ngưng hiển thị do nhận nhiều báo cáo vi phạm. Quản trị viên sẽ xem xét lại.",
                     DocumentId = document.DocumentId,
                     SentAt = DateTime.Now,
                     IsRead = false
@@ -117,47 +97,34 @@ namespace DocumentSharingAPI.Services
                 return;
             }
 
-            bool shouldBeApproved = false;
-            
+            // Đếm số lượt tải duy nhất (Unique user downloads)
+            // Lưu ý: Logic này đã loại trừ người upload tự tải trong Controller hoặc Repository nếu được cài đặt đúng,
+            // nhưng truy vấn này đếm tất cả user unique trong bảng UserDocuments action "Download".
             int uniqueDownloads = await _context.UserDocuments
                 .Where(ud => ud.DocumentId == documentId && ud.ActionType == "Download")
                 .Select(ud => ud.UserId)
                 .Distinct()
                 .CountAsync();
 
-            int reports = document.ReportCount;
-
-            // === LOGIC DUYỆT DỰA TRÊN PHẦN TRĂM (%) ===
-            
-            // Điều kiện tiên quyết: Phải có ít nhất 20 lượt tải để dữ liệu đáng tin cậy.
-            if (uniqueDownloads >= 2)
-            {
-                double reportRatio = (double)reports / uniqueDownloads;
-
-                // Ngưỡng duyệt: Tỷ lệ báo cáo <= 10% (0.1)
-                // Cho phép sai số nhỏ (bấm nhầm report)
-                if (reportRatio <= 0.10)
-                {
-                    shouldBeApproved = true;
-                }
-            }
-
-            if (shouldBeApproved)
+            // Logic mới: Chỉ cần >= 5 lượt tải duy nhất là duyệt
+            if (uniqueDownloads >= 5)
             {
                 document.ApprovalStatus = "Approved";
-                document.ReportCount = 0; // Reset report count khi tự động duyệt
+                // Reset report count khi được thăng cấp để công bằng cho trạng thái mới
+                document.ReportCount = 0;
+                
                 await _documentRepository.UpdateAsync(document);
 
-                // Tặng bonus download cho người upload (VIP bonus nếu tài liệu là VIP, thường nếu tài liệu thường)
+                // Tặng bonus download
                 bool isVipBonus = document.IsVipOnly;
                 await _userRepository.AddBonusDownloadAsync(document.UploadedBy, isVipBonus);
 
-                // Gửi thông báo chúc mừng với thông tin bonus
+                // Gửi thông báo chúc mừng
                 string bonusType = isVipBonus ? "Premium" : "thường";
                 var notification = new Notification
                 {
                     UserId = document.UploadedBy,
-                    Message = $"Chúc mừng! Tài liệu '{document.Title}' đã đạt độ tin cậy cao ({uniqueDownloads} lượt tải, tỷ lệ báo cáo thấp) và chính thức được Duyệt. Bạn đã nhận được 1 lượt tải {bonusType} bonus!",
+                    Message = $"Chúc mừng! Tài liệu '{document.Title}' đã đạt 5 lượt tải tin cậy và chính thức được Duyệt (Approved). Bạn nhận được 1 lượt tải {bonusType} bonus!",
                     DocumentId = document.DocumentId,
                     SentAt = DateTime.Now,
                     IsRead = false
