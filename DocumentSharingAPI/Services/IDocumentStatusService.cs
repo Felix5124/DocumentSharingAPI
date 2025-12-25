@@ -22,5 +22,13 @@ namespace DocumentSharingAPI.Services
         /// <param name="documentId">ID của tài liệu cần kiểm tra.</param>
         /// <returns>Task</returns>
         Task CheckAndPotentiallyPromoteDocumentAsync(int documentId);
+        
+        /// <summary>
+        /// Khôi phục tài liệu sau khi admin duyệt/mở khóa.
+        /// Trả về trạng thái ban đầu và reset report count.
+        /// </summary>
+        /// <param name="documentId">ID của tài liệu cần khôi phục.</param>
+        /// <returns>Task</returns>
+        Task RestoreDocumentAfterAdminReviewAsync(int documentId);
     }
 }

@@ -658,32 +658,29 @@ namespace DocumentSharingAPI.Controllers
                 
                 if (isVipActive)
                 {
-                    // VIP: 2 regular + 2 VIP
+                    // VIP: total 5 uploads per day (any mix of regular/VIP). VIP-specific uploads still require active VIP status.
+                    int totalUsedVip = user.RegularUploadsUsedToday + user.VipUploadsUsedToday;
                     return Ok(new
                     {
                         isVip = true,
                         regularUploadsUsed = user.RegularUploadsUsedToday,
                         vipUploadsUsed = user.VipUploadsUsedToday,
-                        maxRegularUploads = 2,
-                        maxVipUploads = 2,
-                        remainingRegular = Math.Max(2 - user.RegularUploadsUsedToday, 0),
-                        remainingVip = Math.Max(2 - user.VipUploadsUsedToday, 0),
+                        maxTotalUploads = 5,
+                        remainingTotal = Math.Max(5 - totalUsedVip, 0),
                         lastResetDate = user.LastUploadResetDate
                     });
                 }
                 else
                 {
-                    // Regular: 1 file/ngày
-                    int totalUsed = user.RegularUploadsUsedToday + user.VipUploadsUsedToday;
+                    // Regular: 2 regular files/day (VIP uploads are not permitted for regular accounts)
+                    int regularUsed = user.RegularUploadsUsedToday;
                     return Ok(new
                     {
                         isVip = false,
-                        regularUploadsUsed = totalUsed,
+                        regularUploadsUsed = regularUsed,
                         vipUploadsUsed = 0,
-                        maxRegularUploads = 1,
-                        maxVipUploads = 0,
-                        remainingRegular = Math.Max(1 - totalUsed, 0),
-                        remainingVip = 0,
+                        maxTotalUploads = 2,
+                        remainingTotal = Math.Max(2 - regularUsed, 0),
                         lastResetDate = user.LastUploadResetDate
                     });
                 }

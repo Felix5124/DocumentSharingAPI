@@ -29,6 +29,10 @@ namespace DocumentSharingAPI.Models
         // THÊM: trường đếm số lượt báo cáo
         public int ReportCount { get; set; } = 0;
         
+        // Lưu trạng thái trước khi bị tạm khóa (để admin có thể phục hồi)
+        [MaxLength(20)]
+        public string? PreviousApprovalStatus { get; set; }
+        
         public bool IsLock { get; set; } = false;
         public string? CoverImageUrl { get; set; }
         public int ApprovalPriority { get; set; } = 0; // Độ ưu tiên duyệt (VIP = 1, thường = 0)
