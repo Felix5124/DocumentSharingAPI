@@ -35,28 +35,43 @@ namespace DocumentSharingAPI.Services
 
             int reportCount = document.ReportCount;
             bool isVip = document.IsVipOnly;
-            int threshold = int.MaxValue;
+
+            // Đếm số lượt tải duy nhất để tính tỷ lệ báo cáo
+            int uniqueDownloads = await _context.UserDocuments
+                .Where(ud => ud.DocumentId == documentId && ud.ActionType == "Download")
+                .Select(ud => ud.UserId)
+                .Distinct()
+                .CountAsync();
+            if (uniqueDownloads == 0) uniqueDownloads = 1;
+
+            double reportRatio = (double)reportCount / uniqueDownloads;
+            bool shouldChangeToPending = false;
 
             // Thiết lập ngưỡng dựa trên trạng thái và loại tài liệu
             if (document.ApprovalStatus == "SemiApproved")
             {
                 // Logic cho tài liệu "Chưa kiểm duyệt": Demo rules - chỉ cần 2 báo cáo
-                if (reports >= 2)
+                if (reportCount >= 2)
                 {
                     shouldChangeToPending = true;
                 }
             }
             else if (document.ApprovalStatus == "Approved")
             {
-                // Logic cho tài liệu "ĐÃ DUYỆT": Demo rules - 2 báo cáo + 10% ratio
-                if (reports >= 2 && reportRatio > 0.10)
+                // Logic cho tài liệu "ĐÃ DUYỆT": Demo rules - chỉ hạ cấp khi
+                // reportCount > (2 + 10% của lượt tải duy nhất).
+                // Tính ngưỡng dựa trên lượt tải duy nhất.
+                double tenPercentOfDownloads = 0.10 * uniqueDownloads;
+                int threshold = 2 + (int)Math.Ceiling(tenPercentOfDownloads);
+
+                if (reportCount >= threshold)
                 {
                     shouldChangeToPending = true;
                 }
             }
 
             // Kiểm tra điều kiện hạ cấp
-            if (reportCount >= threshold)
+            if (shouldChangeToPending)
             {
                 // Lưu trạng thái trước khi khóa để admin có thể phục hồi
                 document.PreviousApprovalStatus = document.ApprovalStatus;
@@ -115,13 +130,13 @@ namespace DocumentSharingAPI.Services
             int reports = document.ReportCount;
 
             // === LOGIC DUYỆT DỰA TRÊN PHẦN TRĂM (%) ===
-            
+
+            bool shouldBeApproved = false;
             if (uniqueDownloads >= 2)
             {
-                double reportRatio = (double)reports / uniqueDownloads;
+                double reportRatio = (double)reports / Math.Max(1, uniqueDownloads);
 
                 // Ngưỡng duyệt: Tỷ lệ báo cáo <= 10% (0.1)
-                // Cho phép sai số nhỏ (bấm nhầm report)
                 if (reportRatio <= 0.10)
                 {
                     shouldBeApproved = true;
@@ -143,7 +158,7 @@ namespace DocumentSharingAPI.Services
                 var notification = new Notification
                 {
                     UserId = document.UploadedBy,
-                    Message = $"Chúc mừng! Tài liệu '{document.Title}' đã đạt 5 lượt tải tin cậy và chính thức được Duyệt (Approved). Bạn nhận được 1 lượt tải {bonusType} bonus!",
+                    Message = $"Chúc mừng! Tài liệu '{document.Title}' đã đạt số lượt tải yêu cầu và chính thức được Duyệt (Approved). Bạn đã nhận được 1 lượt tải {bonusType} bonus!",
                     DocumentId = document.DocumentId,
                     SentAt = DateTime.Now,
                     IsRead = false
