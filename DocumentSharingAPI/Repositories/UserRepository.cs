@@ -50,21 +50,17 @@ namespace DocumentSharingAPI.Repositories
             // VIP document chỉ VIP mới upload được
             if (isVipDocument && !isVipActive) return false;
 
-            // User thường: chỉ upload được 1 file/ngày (bất kể loại)
+            // User thường: chỉ upload được 2 file/ngày (chỉ đếm file thường)
             if (!isVipActive)
             {
-                return (user.RegularUploadsUsedToday + user.VipUploadsUsedToday) < 1;
+                // Non-VIP users cannot upload VIP documents (checked above),
+                // so only count regular uploads for their limit.
+                return user.RegularUploadsUsedToday < 2; // allow up to 2 regular uploads per day
             }
 
-            // User VIP: 2 regular + 2 VIP
-            if (isVipDocument)
-            {
-                return user.VipUploadsUsedToday < 2;
-            }
-            else
-            {
-                return user.RegularUploadsUsedToday < 2;
-            }
+            // User VIP: tổng cộng 5 file/ngày (bao gồm cả VIP và regular)
+            // VIP users may upload both types; count both counters toward the total cap.
+            return (user.RegularUploadsUsedToday + user.VipUploadsUsedToday) < 5;
         }
 
         public async Task UpdateUploadCountsAsync(int userId, bool isVipUpload)
