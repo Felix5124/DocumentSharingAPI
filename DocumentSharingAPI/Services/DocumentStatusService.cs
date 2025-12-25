@@ -40,22 +40,28 @@ namespace DocumentSharingAPI.Services
             // Thiết lập ngưỡng dựa trên trạng thái và loại tài liệu
             if (document.ApprovalStatus == "SemiApproved")
             {
-                // Tài liệu Premium chưa kiểm duyệt: 3 báo cáo, Thường: 2 báo cáo
-                threshold = isVip ? 3 : 2;
+                // Logic cho tài liệu "Chưa kiểm duyệt": Demo rules - chỉ cần 2 báo cáo
+                if (reports >= 2)
+                {
+                    shouldChangeToPending = true;
+                }
             }
             else if (document.ApprovalStatus == "Approved")
             {
-                // Tài liệu Premium đã kiểm duyệt: 5 báo cáo, Thường: 4 báo cáo
-                threshold = isVip ? 5 : 4;
+                // Logic cho tài liệu "ĐÃ DUYỆT": Demo rules - 2 báo cáo + 10% ratio
+                if (reports >= 2 && reportRatio > 0.10)
+                {
+                    shouldChangeToPending = true;
+                }
             }
 
             // Kiểm tra điều kiện hạ cấp
             if (reportCount >= threshold)
             {
+                // Lưu trạng thái trước khi khóa để admin có thể phục hồi
+                document.PreviousApprovalStatus = document.ApprovalStatus;
                 document.ApprovalStatus = "Pending";
-                // Có thể set IsLock = true nếu muốn khóa ngay lập tức, ở đây ta về Pending để admin duyệt lại
-                // document.IsLock = true;
-                
+                document.IsLock = true;
                 await _documentRepository.UpdateAsync(document);
 
                 // Gửi thông báo cho Admin
@@ -106,13 +112,26 @@ namespace DocumentSharingAPI.Services
                 .Distinct()
                 .CountAsync();
 
-            // Logic mới: Chỉ cần >= 5 lượt tải duy nhất là duyệt
-            if (uniqueDownloads >= 5)
+            int reports = document.ReportCount;
+
+            // === LOGIC DUYỆT DỰA TRÊN PHẦN TRĂM (%) ===
+            
+            if (uniqueDownloads >= 2)
+            {
+                double reportRatio = (double)reports / uniqueDownloads;
+
+                // Ngưỡng duyệt: Tỷ lệ báo cáo <= 10% (0.1)
+                // Cho phép sai số nhỏ (bấm nhầm report)
+                if (reportRatio <= 0.10)
+                {
+                    shouldBeApproved = true;
+                }
+            }
+
+            if (shouldBeApproved)
             {
                 document.ApprovalStatus = "Approved";
-                // Reset report count khi được thăng cấp để công bằng cho trạng thái mới
-                document.ReportCount = 0;
-                
+                // DEMO: Không reset report count khi tự động duyệt
                 await _documentRepository.UpdateAsync(document);
 
                 // Tặng bonus download
@@ -130,6 +149,53 @@ namespace DocumentSharingAPI.Services
                     IsRead = false
                 };
                 await _notificationRepository.AddAsync(notification);
+            }
+        }
+
+        // --- LOGIC PHỤC HỒI SAU KHI ADMIN DUYỆT ---
+        public async Task RestoreDocumentAfterAdminReviewAsync(int documentId)
+        {
+            var document = await _documentRepository.GetByIdAsync(documentId);
+            if (document == null) return;
+
+            // Khôi phục trạng thái ban đầu nếu có lưu
+            if (!string.IsNullOrEmpty(document.PreviousApprovalStatus))
+            {
+                document.ApprovalStatus = document.PreviousApprovalStatus;
+                document.PreviousApprovalStatus = null;
+            }
+
+            // Mở khóa và reset report count
+            document.IsLock = false;
+            document.ReportCount = 0;
+            await _documentRepository.UpdateAsync(document);
+
+            // Kiểm tra xem có cần tự động nâng cấp lên Approved không
+            if (document.ApprovalStatus == "SemiApproved")
+            {
+                int uniqueDownloads = await _context.UserDocuments
+                    .Where(ud => ud.DocumentId == documentId && ud.ActionType == "Download")
+                    .Select(ud => ud.UserId)
+                    .Distinct()
+                    .CountAsync();
+
+                // Nếu đã có >= 2 lượt tải thì tự động nâng lên Approved (KHÔNG tặng bonus vì đã tặng lần đầu)
+                if (uniqueDownloads >= 2)
+                {
+                    document.ApprovalStatus = "Approved";
+                    await _documentRepository.UpdateAsync(document);
+
+                    // Gửi thông báo (không có bonus)
+                    var notification = new Notification
+                    {
+                        UserId = document.UploadedBy,
+                        Message = $"Tài liệu '{document.Title}' đã được Admin mở khóa và tự động nâng lên Approved (có {uniqueDownloads} lượt tải).",
+                        DocumentId = document.DocumentId,
+                        SentAt = DateTime.Now,
+                        IsRead = false
+                    };
+                    await _notificationRepository.AddAsync(notification);
+                }
             }
         }
     }

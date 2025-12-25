@@ -1152,6 +1152,105 @@ namespace DocumentSharingAPI.Controllers
             }
         }
 
+        // New endpoint: Prepare download (no deduction)
+        [HttpGet("{id}/prepare-download")]
+        public async Task<IActionResult> PrepareDownload(int id, [FromQuery] int userId)
+        {
+            try
+            {
+                var document = await _documentRepository.GetByIdAsync(id);
+                if (document == null)
+                    return NotFound(new { message = "Tài liệu không tồn tại." });
+
+                if (document.ApprovalStatus != "Approved" && document.ApprovalStatus != "SemiApproved")
+                    return BadRequest(new { message = "Tài liệu chưa được duyệt." });
+
+                if (document.IsLock)
+                    return BadRequest(new { message = "Tài liệu đã bị khóa." });
+
+                var user = await _userRepository.GetByIdAsync(userId);
+                if (user == null)
+                    return BadRequest(new { message = "Người dùng không tồn tại." });
+
+                // Kiểm tra quyền tải
+                bool canDownload = await _userRepository.CanDownloadAsync(userId, document.IsVipOnly);
+                if (!canDownload)
+                {
+                    if (document.IsVipOnly)
+                    {
+                        return BadRequest(new { message = "Bạn không thể tải tài liệu Premium này. Vui lòng nâng cấp tài khoản Premium hoặc sử dụng lượt tải Premium bonus từ việc upload tài liệu." });
+                    }
+                    else
+                    {
+                        return BadRequest(new { message = "Bạn đã hết lượt tải tài liệu thường hôm nay (2 lượt/ngày cho tài khoản thường). Vui lòng nâng cấp Premium để có 8 lượt thường + 5 lượt VIP/ngày hoặc upload tài liệu để nhận bonus download." });
+                    }
+                }
+
+                // Chỉ tạo URL, KHÔNG trừ lượt
+                var blobPath = document.FileUrl.StartsWith("documents/")
+                    ? document.FileUrl.Substring("documents/".Length)
+                    : document.FileUrl;
+                var sasUrl = _blob.GetReadSasUrl("documents", blobPath, TimeSpan.FromMinutes(10));
+                return Ok(new { url = sasUrl, fileName = $"{document.Title}.{document.FileType}" });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = $"Lỗi server: {ex.Message}" });
+            }
+        }
+
+        // New endpoint: Confirm download (deduct count)
+        [HttpPost("{id}/confirm-download")]
+        public async Task<IActionResult> ConfirmDownload(int id, [FromQuery] int userId)
+        {
+            try
+            {
+                var document = await _documentRepository.GetByIdAsync(id);
+                if (document == null)
+                    return NotFound(new { message = "Tài liệu không tồn tại." });
+
+                var user = await _userRepository.GetByIdAsync(userId);
+                if (user == null)
+                    return BadRequest(new { message = "Người dùng không tồn tại." });
+
+                // CHỈ TĂNG LƯỢT TẢI VÀ CẬP NHẬT LỊCH SỬ NẾU NGƯỜI TẢI KHÔNG PHẢI CHỦ SỞ HỮU
+                if (user.UserId != document.UploadedBy)
+                {
+                    await _userRepository.UpdateDownloadCountsAsync(userId, document.IsVipOnly);
+                    await _documentRepository.IncrementDownloadCountAsync(id);
+
+                    var userDocument = await _userDocumentRepository.GetByUserIdDocumentIdAndActionAsync(userId, id, "Download");
+                    if (userDocument == null)
+                    {
+                        await _userDocumentRepository.AddAsync(new UserDocument
+                        {
+                            UserId = userId,
+                            DocumentId = id,
+                            ActionType = "Download",
+                            AddedAt = DateTime.Now
+                        });
+                    }
+
+                    await _context.SaveChangesAsync();
+
+                    // Tự động kiểm tra để duyệt hoặc hạ cấp tài liệu
+                    var updatedDocument = await _documentRepository.GetByIdAsync(id);
+                    await _documentStatusService.CheckAndPotentiallyPromoteDocumentAsync(updatedDocument.DocumentId);
+                    await _documentStatusService.CheckAndPotentiallyDemoteDocumentAsync(updatedDocument.DocumentId);
+                }
+                else
+                {
+                    await _context.SaveChangesAsync();
+                }
+
+                return Ok(new { message = "Xác nhận tải thành công." });
+            }
+            catch (Exception ex)
+            {
+                return StatusCode(500, new { message = $"Lỗi server: {ex.Message}" });
+            }
+        }
+
         [HttpGet("{id}/admin-download")]
         public async Task<IActionResult> AdminDownload(int id, [FromQuery] int userId)
         {
@@ -1320,7 +1419,11 @@ namespace DocumentSharingAPI.Controllers
                 if (model.IsLocked)
                 {
                     // === HÀNH ĐỘNG KHÓA (XÁC NHẬN VI PHẠM) ===
-                    // Mark as suspended and lock access
+                    // Lưu trạng thái hiện tại trước khi khóa (CHỈ NẾU CHƯA CÓ - tránh ghi đè)
+                    if (string.IsNullOrEmpty(document.PreviousApprovalStatus))
+                    {
+                        document.PreviousApprovalStatus = document.ApprovalStatus;
+                    }
                     document.ApprovalStatus = "Suspended";
                     document.IsLock = true;
 
@@ -1337,24 +1440,10 @@ namespace DocumentSharingAPI.Controllers
                 else
                 {
                     // === HÀNH ĐỘNG MỞ KHÓA ===
-                    // Nếu admin muốn phục hồi về Approved thì sẽ gửi flag RestoreToApproved = true
-                    // Ngược lại mặc định đặt về SemiApproved
-                    bool restoreToApproved = false;
-                    try { restoreToApproved = (model as dynamic).RestoreToApproved ?? false; } catch { restoreToApproved = false; }
+                    // Gọi service để khôi phục trạng thái ban đầu từ PreviousApprovalStatus
+                    await _documentStatusService.RestoreDocumentAfterAdminReviewAsync(id);
 
-                    if (restoreToApproved)
-                    {
-                        document.ApprovalStatus = "Approved";
-                    }
-                    else
-                    {
-                        document.ApprovalStatus = "SemiApproved";
-                    }
-
-                    document.IsLock = false;
-                    document.ReportCount = 0; // Reset report count khi mở khóa
-
-                    // Khi mở khóa thủ công, coi như các báo cáo trước đó (Resolved/Pending) là không còn hiệu lực hoặc đã tha thứ
+                    // Khi mở khóa thủ công, coi như các báo cáo trước đó (Resolved/Pending) là không còn hiệu lực
                     var reports = await _context.Reports
                         .Where(r => r.DocumentId == id && (r.Status == "Pending" || r.Status == "Resolved"))
                         .ToListAsync();
@@ -1363,6 +1452,9 @@ namespace DocumentSharingAPI.Controllers
                     {
                         report.Status = "Rejected";
                     }
+
+                    // Document đã được update trong service, load lại để có data mới nhất
+                    document = await _documentRepository.GetByIdAsync(id);
                 }
 
                 _context.Documents.Update(document);
@@ -1483,15 +1575,11 @@ namespace DocumentSharingAPI.Controllers
                 document.ReportCount = 0;
                 document.IsLock = false; // <--- QUAN TRỌNG: Phải mở khóa
 
-                // Admin đã kiểm tra và reset reports = tài liệu đã được duyệt
-                // Không cần phải quay về SemiApproved nữa
-                if (document.ApprovalStatus == "Suspended" || document.ApprovalStatus == "Pending")
-                {
-                    document.ApprovalStatus = "Approved";
-                }
-                // Nếu đang là Approved hoặc SemiApproved thì chuyển thành Approved
+                // Gọi service để khôi phục trạng thái ban đầu (giống như logic unlock)
+                await _documentStatusService.RestoreDocumentAfterAdminReviewAsync(id);
 
-                _context.Documents.Update(document);
+                // Document đã được update trong service, không cần update lại ở đây
+                // _context.Documents.Update(document); // Bỏ dòng này
 
                 // 3. Thông báo cho người dùng
                 var notification = new Notification
