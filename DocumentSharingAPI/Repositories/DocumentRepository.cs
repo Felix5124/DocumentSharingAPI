@@ -96,11 +96,20 @@ namespace DocumentSharingAPI.Repositories
                 case "newest":
                     query = query.OrderByDescending(d => d.UploadedAt);
                     break;
+                case "oldest":
+                    query = query.OrderBy(d => d.UploadedAt);
+                    break;
                 case "popular":
                     query = query.OrderByDescending(d => d.DownloadCount);
                     break;
-                default:
+                case "title_asc":
                     query = query.OrderBy(d => d.Title);
+                    break;
+                case "title_desc":
+                    query = query.OrderByDescending(d => d.Title);
+                    break;
+                default:
+                    query = query.OrderByDescending(d => d.UploadedAt);
                     break;
             }
 
@@ -205,13 +214,28 @@ namespace DocumentSharingAPI.Repositories
             switch (sortBy?.ToLower())
             {
                 case "newest":
+                    Console.WriteLine($"[SORT] Applying 'newest' sort (UploadedAt DESC)");
                     query = query.OrderByDescending(d => d.UploadedAt);
                     break;
+                case "oldest":
+                    Console.WriteLine($"[SORT] Applying 'oldest' sort (UploadedAt ASC)");
+                    query = query.OrderBy(d => d.UploadedAt);
+                    break;
                 case "popular":
+                    Console.WriteLine($"[SORT] Applying 'popular' sort (DownloadCount DESC)");
                     query = query.OrderByDescending(d => d.DownloadCount);
                     break;
-                default:
+                case "title_asc":
+                    Console.WriteLine($"[SORT] Applying 'title_asc' sort (Title ASC)");
                     query = query.OrderBy(d => d.Title);
+                    break;
+                case "title_desc":
+                    Console.WriteLine($"[SORT] Applying 'title_desc' sort (Title DESC)");
+                    query = query.OrderByDescending(d => d.Title);
+                    break;
+                default:
+                    Console.WriteLine($"[SORT] No valid sort specified, defaulting to 'newest' (UploadedAt DESC)");
+                    query = query.OrderByDescending(d => d.UploadedAt);
                     break;
             }
 
@@ -220,6 +244,12 @@ namespace DocumentSharingAPI.Repositories
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
                 .ToListAsync();
+
+            Console.WriteLine($"[SORT] Retrieved {documents.Count} documents after sorting");
+            if (documents.Count > 0)
+            {
+                Console.WriteLine($"[SORT] First 3 docs: {string.Join(", ", documents.Take(3).Select(d => $"{d.Title}(DL:{d.DownloadCount})"))}");
+            }
 
             return (documents, total);
         }
